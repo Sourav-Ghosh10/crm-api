@@ -1,0 +1,11 @@
+Testing login with non-existent user...
+Status: 401
+Response: {
+  "success": false,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid user. Please try again.",
+    "timestamp": "2025-12-18T14:32:43.986Z"
+  }
+}
+Γ£à Success: Received 401 UNAUTHORIZED as expected
