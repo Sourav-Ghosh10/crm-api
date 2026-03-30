@@ -104,6 +104,7 @@ app.use('/api/leave-types', require('./routes/leaveTypeRoutes'));
 app.use('/api/reimbursements', require('./routes/reimbursementRoutes'));
 app.use('/api/reimbursement-types', require('./routes/reimbursementTypeRoutes'));
 app.use('/api/roles', require('./routes/roleRoutes'));
+app.use('/api/announcements', require('./routes/announcementRoutes'));
 // app.use('/api/leave-policies', require('./routes/leavePolicyRoutes'));
 
 app.get('/api/list-attendance', async (req, res) => {

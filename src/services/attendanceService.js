@@ -7,6 +7,7 @@ const { BadRequestError, NotFoundError } = require('../utils/errors');
 const moment = require('moment');
 const logger = require('../utils/logger');
 const holidayService = require('./holidayService');
+const { getRealTime } = require('../utils/realTime');
 
 // Shared Helper: Format duration in MS to "1H 2M 2S"
 const formatDuration = (ms) => {
@@ -32,7 +33,7 @@ const enrichAttendanceRecord = (record) => {
     if (record.breaks) {
         record.breaks.forEach(b => {
             const start = new Date(b.startTime);
-            const end = b.endTime ? new Date(b.endTime) : (isToday ? new Date() : start);
+            const end = b.endTime ? new Date(b.endTime) : (isToday ? getRealTime() : start);
             const durationMs = Math.max(0, end - start);
             b.durationMs = durationMs;
             b.durationString = formatDuration(durationMs);
@@ -43,14 +44,14 @@ const enrichAttendanceRecord = (record) => {
     // 2. Enrich Sessions
     record.sessions.forEach(session => {
         const checkInTime = new Date(session.checkIn.time);
-        const checkOutTime = (session.checkOut && session.checkOut.time) ? new Date(session.checkOut.time) : (isToday ? new Date() : null);
+        const checkOutTime = (session.checkOut && session.checkOut.time) ? new Date(session.checkOut.time) : (isToday ? getRealTime() : null);
 
         let durationMs = 0;
         if (checkInTime && checkOutTime) {
             durationMs = Math.max(0, checkOutTime - checkInTime);
         } else if (checkInTime) {
             // For open sessions, we use current time to show real-time duration
-            durationMs = Math.max(0, new Date() - checkInTime);
+            durationMs = Math.max(0, getRealTime() - checkInTime);
         }
 
         // Find breaks that started/occurred during this session
@@ -97,8 +98,8 @@ const enrichAttendanceRecord = (record) => {
 
 const attendanceService = {
     clockIn: async (userId, payload) => {
-        const today = moment.utc().startOf('day').toDate();
-        const now = new Date();
+        const now = getRealTime();
+        const today = moment(now).utc().startOf('day').toDate();
 
         // 1. Check if attendance record for today exists
         let attendance = await Attendance.findOne({
@@ -189,9 +190,9 @@ const attendanceService = {
     },
 
     clockOut: async (userId, payload) => {
-        const today = moment.utc().startOf('day').toDate();
-        const now = new Date();
-
+        const now = getRealTime();
+        const today = moment(now).utc().startOf('day').toDate();
+        
         const attendance = await Attendance.findOne({
             employeeId: userId,
             date: today,
@@ -254,7 +255,7 @@ const attendanceService = {
     },
 
     startBreak: async (userId) => {
-        const today = moment.utc().startOf('day').toDate();
+        const today = moment(getRealTime()).utc().startOf('day').toDate();
         const attendance = await Attendance.findOne({ employeeId: userId, date: today });
 
         if (!attendance) throw new BadRequestError('Not clocked in');
@@ -277,14 +278,14 @@ const attendanceService = {
             throw new BadRequestError('You can take only 10 breaks in a session');
         }
 
-        attendance.breaks.push({ startTime: new Date() });
+        attendance.breaks.push({ startTime: getRealTime() });
         await attendance.save();
 
         return attendance;
     },
 
     resumeWork: async (userId) => {
-        const today = moment.utc().startOf('day').toDate();
+        const today = moment(getRealTime()).utc().startOf('day').toDate();
         const attendance = await Attendance.findOne({ employeeId: userId, date: today });
 
         if (!attendance) throw new BadRequestError('Not clocked in');
@@ -293,7 +294,7 @@ const attendanceService = {
         if (breakIndex === -1) throw new BadRequestError('Not currently on break');
 
         const breakItem = attendance.breaks[breakIndex];
-        breakItem.endTime = new Date();
+        breakItem.endTime = getRealTime();
 
         const durationMs = breakItem.endTime - breakItem.startTime;
         const durationMins = durationMs / (1000 * 60);
@@ -308,9 +309,10 @@ const attendanceService = {
     },
 
     getAttendanceStatus: async (userId) => {
-        const today = moment.utc().startOf('day').toDate();
-        const monthStart = moment.utc().startOf('month').toDate();
-        const monthEnd = moment.utc().endOf('month').toDate();
+        const now = getRealTime();
+        const today = moment(now).utc().startOf('day').toDate();
+        const monthStart = moment(now).utc().startOf('month').toDate();
+        const monthEnd = moment(now).utc().endOf('month').toDate();
 
         const [attendance, user, holidays, schedules, monthlyAttendanceCount] = await Promise.all([
             Attendance.findOne({ employeeId: userId, date: today }).lean(),
@@ -415,6 +417,7 @@ const attendanceService = {
                 totalSessions: 0,
                 totalBreakTime: 0,
                 totalHours: 0,
+                timestamp: getRealTime(),
                 ...monthlyOffStats,
                 ...(logoutCorrectionData || { requiresLogoutCorrection: false })
             };
@@ -439,6 +442,7 @@ const attendanceService = {
             totalDurationString: enriched.totalDurationString,
             status: enriched.status,
             remarks: enriched.remarks,
+            timestamp: getRealTime(),
             ...monthlyOffStats,
             ...(logoutCorrectionData || { requiresLogoutCorrection: false })
         };
@@ -703,7 +707,7 @@ const attendanceService = {
     },
 
     getIncompleteShiftStatus: async (userId) => {
-        const today = moment.utc().startOf('day').toDate();
+        const today = moment(getRealTime()).utc().startOf('day').toDate();
         const incompleteAttendance = await Attendance.findOne({
             employeeId: userId,
             date: { $lt: today },
@@ -720,7 +724,8 @@ const attendanceService = {
                     requiresLogoutCorrection: true,
                     shiftId: incompleteAttendance._id,
                     loginTime: lastSession.checkIn.time,
-                    shiftDate: moment(incompleteAttendance.date).format('YYYY-MM-DD')
+                    shiftDate: moment(incompleteAttendance.date).format('YYYY-MM-DD'),
+                    timestamp: getRealTime()
                 };
             }
         }
