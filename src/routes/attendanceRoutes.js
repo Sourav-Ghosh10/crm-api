@@ -200,6 +200,24 @@ router.get('/me', validate(require('../validators/attendanceValidator').attendan
 
 /**
  * @swagger
+ * /api/attendance/summary:
+ *   get:
+ *     summary: Get attendance summary (all employees merged with records)
+ *     tags: [Attendance]
+ */
+router.get('/summary', attendanceController.getAttendanceSummary);
+
+/**
+ * @swagger
+ * /api/attendance/summary/stats:
+ *   get:
+ *     summary: Get attendance statistics for cards
+ *     tags: [Attendance]
+ */
+router.get('/summary/stats', attendanceController.getAttendanceStats);
+
+/**
+ * @swagger
  * /api/attendance/{id}:
  *   get:
  *     summary: Get attendance details by ID

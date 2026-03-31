@@ -35,6 +35,7 @@ const userService = {
     const [users, total] = await Promise.all([
       User.find(query)
         .select('-passwordHash')
+        .populate('employment.roleId')
         .populate('employment.reportingManager', 'personalInfo.firstName personalInfo.lastName')
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
@@ -49,6 +50,7 @@ const userService = {
   getUserById: async (id) => {
     const user = await User.findById(id)
       .select('-passwordHash')
+      .populate('employment.roleId')
       .populate('employment.reportingManager', 'personalInfo.firstName personalInfo.lastName')
       .lean();
 
@@ -89,6 +91,15 @@ const userService = {
     userData.passwordHash = userData.password;
     delete userData.password;
 
+    // Resolve role name if roleId is provided
+    if (userData.employment?.roleId) {
+      const Role = require('../models/Role');
+      const roleDoc = await Role.findById(userData.employment.roleId);
+      if (roleDoc) {
+        userData.employment.role = roleDoc.name;
+      }
+    }
+
     const user = await User.create(userData);
 
     logger.info(`User created: ${user.employeeId}`);
@@ -98,6 +109,15 @@ const userService = {
 
   updateUser: async (id, updateData) => {
     const updatePayload = {};
+
+    // Resolve role name if roleId is provided
+    if (updateData.employment?.roleId) {
+      const Role = require('../models/Role');
+      const roleDoc = await Role.findById(updateData.employment.roleId);
+      if (roleDoc) {
+        updateData.employment.role = roleDoc.name;
+      }
+    }
 
     // 🔹 Handle employment safely
     if (updateData.employment) {
@@ -147,7 +167,8 @@ const userService = {
         new: true,
         runValidators: true,
       }
-    ).select('-passwordHash');
+    ).select('-passwordHash')
+    .populate('employment.roleId');
 
     if (!user) {
       throw new NotFoundError('User not found');

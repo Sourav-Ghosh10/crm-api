@@ -254,9 +254,9 @@ const leaveController = {
         }
 
         // RBAC & Hierarchy Filtering
-        const userRole = req.user.employment?.role;
+        const userRole = (req.user.employment?.role || '').toLowerCase();
         const canApprove = req.user.permissions?.canApproveLeave || false;
-        const isAdminOrHR = userRole === 'admin' || userRole === 'hr' || req.user.isAdmin;
+        const isAdminOrHR = userRole === 'admin' || userRole === 'hr' || userRole === 'super admin' || req.user.isAdmin;
 
         // If user is Admin/HR or has explicit approve permission, they can see everything (filters apply normally)
         if (!isAdminOrHR && !canApprove) {
@@ -489,9 +489,10 @@ const leaveController = {
         // Permission Check: Only the reporting manager, Admin/HR, or user with canApproveLeave permission
         const requester = leave.employeeId;
         const reportingManagerId = requester.employment?.reportingManager;
+        const currentApproverRole = (req.user.employment?.role || '').toLowerCase();
 
         const isReportingManager = reportingManagerId && reportingManagerId.toString() === approverId.toString();
-        const isAdmin = req.user.employment?.role === 'admin' || req.user.employment?.role === 'hr' || req.user.isAdmin;
+        const isAdmin = currentApproverRole === 'admin' || currentApproverRole === 'hr' || currentApproverRole === 'super admin' || req.user.isAdmin;
         const hasApprovePermission = req.user.permissions?.canApproveLeave === true;
 
         if (!isReportingManager && !isAdmin && !hasApprovePermission) {

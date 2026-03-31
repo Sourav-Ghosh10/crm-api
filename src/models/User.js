@@ -67,11 +67,12 @@ const userSchema = new mongoose.Schema(
     employment: {
       role: {
         type: String,
-        enum: {
-          values: Object.values(USER_ROLES),
-          message: '{VALUE} is not a valid role',
-        },
         default: USER_ROLES.EMPLOYEE,
+      },
+      roleId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Role',
+        default: null,
       },
       department: String,
       designation: String,

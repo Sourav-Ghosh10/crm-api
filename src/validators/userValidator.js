@@ -5,7 +5,7 @@ const { objectIdSchema } = require('./commonValidator');
 const userQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
-  role: Joi.string().valid('admin', 'hr', 'manager', 'employee', 'client'),
+  role: Joi.string(),
   department: Joi.string(),
   employmentType: Joi.string().valid('full-time', 'part-time', 'contract', 'intern'),
   isActive: Joi.boolean(),
@@ -61,7 +61,8 @@ const createUserSchema = Joi.object({
     }),
   }).required(),
   employment: Joi.object({
-    role: Joi.string().valid('admin', 'hr', 'manager', 'employee', 'client').default('employee'),
+    role: Joi.string().default('employee'),
+    roleId: objectIdSchema.allow(null),
     department: Joi.string().max(100),
     designation: Joi.string().max(100),
     dateOfJoining: Joi.date().iso(),

@@ -11,13 +11,14 @@ const authorize =
       return next(new ForbiddenError('User not authenticated'));
     }
 
-    const userRole = req.user.employment?.role;
+    const userRole = (req.user.employment?.role || '').toLowerCase();
+    const isAdmin = userRole === 'admin' || userRole === 'super admin' || req.user.isAdmin === true;
 
-    if (!userRole || !allowedRoles.includes(userRole)) {
-      return next(new ForbiddenError(`Access denied. Required roles: ${allowedRoles.join(', ')}`));
+    if (isAdmin || allowedRoles.map(r => r.toLowerCase()).includes(userRole)) {
+      return next();
     }
 
-    next();
+    return next(new ForbiddenError(`Access denied. Required roles: ${allowedRoles.join(', ')}`));
   };
 
 /**
@@ -29,8 +30,11 @@ const requirePermission = (permission) => (req, res, next) => {
     return next(new ForbiddenError('User not authenticated'));
   }
 
+  const userRole = (req.user.employment?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin' || userRole === 'super admin' || req.user.isAdmin === true;
+
   // Admins have all permissions
-  if (req.user.employment?.role === 'admin') {
+  if (isAdmin) {
     return next();
   }
 
@@ -61,17 +65,18 @@ const authorizeOwnerOrRole =
       return next(new ForbiddenError('User not authenticated'));
     }
 
-    const userRole = req.user.employment?.role;
-    const userId = req.user.id || req.user._id;
-    const resourceUserId = req.params.id || req.params.userId;
+    const userRole = (req.user.employment?.role || '').toLowerCase();
+    const isAdmin = userRole === 'admin' || userRole === 'super admin' || req.user.isAdmin === true;
+    const userId = (req.user.id || req.user._id).toString();
+    const resourceUserId = (req.params.id || req.params.userId || '').toString();
 
     // Check if user is accessing their own resource
-    const isOwner = userId.toString() === resourceUserId;
+    const isOwner = userId === resourceUserId;
 
     // Check if user has required role
-    const hasRole = allowedRoles.includes(userRole);
+    const hasRole = allowedRoles.map(r => r.toLowerCase()).includes(userRole);
 
-    if (isOwner || hasRole) {
+    if (isOwner || isAdmin || hasRole) {
       return next();
     }
 

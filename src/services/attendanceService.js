@@ -2,6 +2,7 @@ const Attendance = require('../models/Attendance');
 const Schedule = require('../models/Schedule');
 const Holiday = require('../models/Holiday');
 const User = require('../models/User');
+const Leave = require('../models/Leave');
 const { ATTENDANCE_STATUS } = require('../config/constants');
 const { BadRequestError, NotFoundError } = require('../utils/errors');
 const moment = require('moment');
@@ -731,6 +732,178 @@ const attendanceService = {
         }
 
         return { requiresLogoutCorrection: false };
+    },
+
+    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, search, status, isLate }) => {
+        const skip = (page - 1) * limit;
+        const start = moment(startDate || getRealTime()).startOf('day').toDate();
+        const end = moment(endDate || getRealTime()).endOf('day').toDate();
+
+        // 1. Build User Filter
+        const userFilter = { isActive: true };
+        if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
+        if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
+        if (search) {
+            userFilter.$or = [
+                { 'personalInfo.firstName': { $regex: search, $options: 'i' } },
+                { 'personalInfo.lastName': { $regex: search, $options: 'i' } },
+                { employeeId: { $regex: search, $options: 'i' } },
+                {
+                    $expr: {
+                        $regexMatch: {
+                            input: { $concat: ['$personalInfo.firstName', ' ', '$personalInfo.lastName'] },
+                            regex: search,
+                            options: 'i',
+                        },
+                    },
+                },
+            ];
+        }
+
+        // 2. Fetch Users (Paginated)
+        const totalUsers = await User.countDocuments(userFilter);
+        const users = await User.find(userFilter)
+            .select('personalInfo employment username employeeId isHolidayApplicable')
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+        const userIds = users.map(u => u._id);
+
+        // 3. Fetch Attendance Records for these users in range
+        const attendanceRecords = await Attendance.find({
+            employeeId: { $in: userIds },
+            date: { $gte: start, $lte: end }
+        }).lean();
+
+        // 4. Fetch Holidays and Leaves
+        const [holidays, leaves] = await Promise.all([
+            holidayService.getHolidaysInRange(start, end),
+            Leave.find({
+                employeeId: { $in: userIds },
+                status: 'approved',
+                $or: [
+                    { startDate: { $lte: end }, endDate: { $gte: start } }
+                ]
+            }).lean()
+        ]);
+
+        const holidayDates = holidays.map(h => moment(h.date).format('YYYY-MM-DD'));
+
+        // 5. Build Combined Attendance List
+        const attendance = users.map(user => {
+            const record = attendanceRecords.find(r => r.employeeId.toString() === user._id.toString());
+            const dateStr = moment(start).format('YYYY-MM-DD');
+            const dayName = moment(start).format('dddd');
+
+            // Find Leave
+            const leave = leaves.find(l => {
+                const lStart = moment(l.startDate).startOf('day');
+                const lEnd = moment(l.endDate).endOf('day');
+                return moment(start).isBetween(lStart, lEnd, 'day', '[]');
+            });
+
+            // Is Holiday
+            const isHoliday = holidayDates.includes(dateStr) && (user.isHolidayApplicable !== false);
+            
+            // Is Weekend (Simple check for now, can be improved with Schedule logic)
+            const isWeekend = user.employment?.workingHours?.weeklyOff?.includes(dayName) || false;
+
+            if (record) {
+                return {
+                    ...enrichAttendanceRecord(record),
+                    name: `${user.personalInfo?.firstName} ${user.personalInfo?.lastName}`,
+                    email: user.personalInfo?.email,
+                    department: user.employment?.department
+                };
+            }
+
+            // Determine non-present status
+            let calculatedStatus = ATTENDANCE_STATUS.ABSENT;
+            if (leave) calculatedStatus = ATTENDANCE_STATUS.ON_LEAVE;
+            else if (isHoliday) calculatedStatus = ATTENDANCE_STATUS.HOLIDAY;
+            else if (isWeekend) calculatedStatus = ATTENDANCE_STATUS.WEEKEND;
+
+            return {
+                _id: user._id,
+                employeeId: user._id,
+                date: start,
+                status: calculatedStatus,
+                name: `${user.personalInfo?.firstName} ${user.personalInfo?.lastName}`,
+                email: user.personalInfo?.email,
+                department: user.employment?.department,
+                isLate: false,
+                punctuality: '-',
+                totalHours: 0,
+                totalDurationString: '0S',
+                sessions: [],
+                breaks: []
+            };
+        });
+
+        // 6. Post-mapping filter if status was provided (since we joined simulated data)
+        // Note: For large datasets, this strategy needs change to true aggregation join
+        let finalAttendance = attendance;
+        if (status && status !== 'all') {
+            finalAttendance = finalAttendance.filter(a => a.status.toLowerCase() === status.toLowerCase());
+        }
+        if (isLate === true || isLate === 'true') {
+            finalAttendance = finalAttendance.filter(a => a.isLate);
+        }
+
+        return {
+            attendance: finalAttendance,
+            pagination: {
+                total: totalUsers,
+                page: Number(page),
+                limit: Number(limit),
+                pages: Math.ceil(totalUsers / limit)
+            }
+        };
+    },
+
+    getStats: async ({ date, department, designation }) => {
+        const start = moment(date || getRealTime()).startOf('day').toDate();
+        const end = moment(date || getRealTime()).endOf('day').toDate();
+
+        // 1. Build User Filter
+        const userFilter = { isActive: true };
+        if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
+        if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
+
+        const totalActiveEmployees = await User.countDocuments(userFilter);
+        const activeUserIds = await User.find(userFilter).distinct('_id');
+
+        // 2. Fetch specific counts
+        const [presentRecords, onLeaveCount] = await Promise.all([
+            Attendance.find({
+                employeeId: { $in: activeUserIds },
+                date: { $gte: start, $lte: end },
+                status: ATTENDANCE_STATUS.PRESENT
+            }).lean(),
+            Leave.countDocuments({
+                employeeId: { $in: activeUserIds },
+                status: 'approved',
+                startDate: { $lte: end },
+                endDate: { $gte: start }
+            })
+        ]);
+
+        const presentCount = presentRecords.length;
+        const lateCount = presentRecords.filter(r => r.isLate).length;
+        
+        // Absent logic: Active - Present - Leave (Holidays/Weekends usually counted separately in UI or shown as Absent if not exempt)
+        // For simplicity matching UI cards:
+        const absentCount = Math.max(0, totalActiveEmployees - presentCount - onLeaveCount);
+
+        return {
+            total: totalActiveEmployees,
+            present: presentCount,
+            late: lateCount,
+            absent: absentCount,
+            onLeave: onLeaveCount,
+            halfDay: presentRecords.filter(r => r.status === ATTENDANCE_STATUS.HALF_DAY).length
+        };
     }
 };
 

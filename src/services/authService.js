@@ -19,7 +19,9 @@ const emailService = require('./emailService');
 
 const authService = {
   login: async ({ email, password, ipAddress, checked = false }) => {
-    const user = await User.findOne({ 'personalInfo.email': email }).select('+passwordHash');
+    const user = await User.findOne({ 'personalInfo.email': email })
+      .select('+passwordHash')
+      .populate('employment.roleId');
 
     if (!user) {
       throw new UnauthorizedError('Invalid user. Please try again.');
@@ -226,7 +228,7 @@ const authService = {
     const { getAuth } = require('../config/firebase');
 
     let decodedToken;
-    const user = await User.findOne({ 'personalInfo.email': emailcheck });
+    const user = await User.findOne({ 'personalInfo.email': emailcheck }).populate('employment.roleId');
 
     if (!user) {
       throw new UnauthorizedError(

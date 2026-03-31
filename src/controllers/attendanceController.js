@@ -148,6 +148,30 @@ const attendanceController = {
         } catch (error) {
             next(error);
         }
+    },
+    getAttendanceSummary: async (req, res, next) => {
+        try {
+            const result = await attendanceService.getSummary(req.query);
+            res.status(200).json({
+                success: true,
+                message: 'Attendance summary fetched successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
+    },
+    getAttendanceStats: async (req, res, next) => {
+        try {
+            const result = await attendanceService.getStats(req.query);
+            res.status(200).json({
+                success: true,
+                message: 'Attendance stats fetched successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
     }
 };
 

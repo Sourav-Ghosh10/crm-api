@@ -39,7 +39,7 @@ const activityService = {
                     type: 'CLOCK_IN',
                     timestamp: attendance.checkIn.time,
                     title: 'Clocked In',
-                    description: `Clocked in at ${moment(attendance.checkIn.time).format('hh:mm A')}`,
+                    description: '',
                     metadata: {
                         deviceInfo: attendance.checkIn.deviceInfo,
                         ipAddress: attendance.checkIn.ipAddress
@@ -58,7 +58,7 @@ const activityService = {
                             type: 'CLOCK_IN',
                             timestamp: session.checkIn.time,
                             title: 'Clocked In (Session)',
-                            description: `Logged back in at ${moment(session.checkIn.time).format('hh:mm A')}`
+                            description: ''
                         });
                     }
                     if (session.checkOut && session.checkOut.time) {
@@ -66,7 +66,7 @@ const activityService = {
                             type: 'CLOCK_OUT',
                             timestamp: session.checkOut.time,
                             title: 'Clocked Out',
-                            description: `Clocked out at ${moment(session.checkOut.time).format('hh:mm A')}`
+                            description: ''
                         });
                     }
                 });
@@ -80,7 +80,7 @@ const activityService = {
                             type: 'BREAK_START',
                             timestamp: brk.startTime,
                             title: 'Break Started',
-                            description: `Started break at ${moment(brk.startTime).format('hh:mm A')}`
+                            description: ''
                         });
                     }
                     if (brk.endTime) {
@@ -88,7 +88,7 @@ const activityService = {
                             type: 'BREAK_END',
                             timestamp: brk.endTime,
                             title: 'Break Ended',
-                            description: `Resumed work at ${moment(brk.endTime).format('hh:mm A')}`,
+                            description: '',
                             metadata: {
                                 duration: brk.durationString
                             }
