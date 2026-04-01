@@ -9,20 +9,23 @@ let syncPoint = {
 
 const syncWithExternalTime = async () => {
     const backupSources = [
-        'https://worldtimeapi.org/api/timezone/Asia/Kolkata',
-        'https://timeapi.io/api/Time/current/zone?timeZone=Asia/Kolkata',
+        'https://worldtimeapi.org/api/timezone/Etc/UTC',
+        'https://timeapi.io/api/Time/current/zone?timeZone=UTC',
         'https://worldtimeapi.org/api/ip'
     ];
 
     for (const source of backupSources) {
         try {
             const response = await axios.get(source, { timeout: 5000 });
-            let timestamp;
+            console.log(`🕒 Syncing with ${source}...`);
+            let dateStr = response.data.datetime || response.data.dateTime;
             
-            if (response.data && response.data.datetime) {
-                timestamp = new Date(response.data.datetime).getTime();
-            } else if (response.data && response.data.dateTime) {
-                timestamp = new Date(response.data.dateTime).getTime();
+            if (dateStr) {
+                // Ensure the string is treated as UTC if it doesn't specify an offset
+                if (!dateStr.includes('+') && !dateStr.includes('Z')) {
+                    dateStr += 'Z';
+                }
+                timestamp = new Date(dateStr).getTime();
             }
 
             if (timestamp) {

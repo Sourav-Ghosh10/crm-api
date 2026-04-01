@@ -106,7 +106,8 @@ const attendanceService = {
         if (!user) throw new NotFoundError('User not found');
 
         const timezone = user.employment?.timezone || 'Asia/Kolkata';
-        const today = moment(now).tz(timezone).startOf('day').toDate();
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const today = moment.utc(todayStr).toDate();
 
         // 2. Check if attendance record for today exists
         let attendance = await Attendance.findOne({
@@ -199,7 +200,8 @@ const attendanceService = {
         if (!user) throw new NotFoundError('User not found');
         
         const timezone = user.employment?.timezone || 'Asia/Kolkata';
-        const today = moment(now).tz(timezone).startOf('day').toDate();
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const today = moment.utc(todayStr).toDate();
         
         const attendance = await Attendance.findOne({
             employeeId: userId,
@@ -266,7 +268,8 @@ const attendanceService = {
         const now = getRealTime();
         const user = await User.findById(userId).select('employment.timezone').lean();
         const timezone = user?.employment?.timezone || 'Asia/Kolkata';
-        const today = moment(now).tz(timezone).startOf('day').toDate();
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const today = moment.utc(todayStr).toDate();
         const attendance = await Attendance.findOne({ employeeId: userId, date: today });
 
         if (!attendance) throw new BadRequestError('Not clocked in');
@@ -299,7 +302,8 @@ const attendanceService = {
         const now = getRealTime();
         const user = await User.findById(userId).select('employment.timezone').lean();
         const timezone = user?.employment?.timezone || 'Asia/Kolkata';
-        const today = moment(now).tz(timezone).startOf('day').toDate();
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const today = moment.utc(todayStr).toDate();
         const attendance = await Attendance.findOne({ employeeId: userId, date: today });
 
         if (!attendance) throw new BadRequestError('Not clocked in');
@@ -329,9 +333,12 @@ const attendanceService = {
         const userBasic = await User.findById(userId).select('employment.timezone isHolidayApplicable').lean();
         const timezone = userBasic?.employment?.timezone || 'Asia/Kolkata';
 
-        const today = moment(now).tz(timezone).startOf('day').toDate();
-        const monthStart = moment(now).tz(timezone).startOf('month').toDate();
-        const monthEnd = moment(now).tz(timezone).endOf('month').toDate();
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const today = moment.utc(todayStr).toDate();
+        const monthStartStr = moment(now).tz(timezone).startOf('month').format('YYYY-MM-DD');
+        const monthStart = moment.utc(monthStartStr).toDate();
+        const monthEndStr = moment(now).tz(timezone).endOf('month').format('YYYY-MM-DD');
+        const monthEnd = moment.utc(monthEndStr).toDate();
 
         const [attendance, holidays, schedules, monthlyAttendanceCount] = await Promise.all([
             Attendance.findOne({ employeeId: userId, date: today }).lean(),
@@ -520,8 +527,8 @@ const attendanceService = {
         }
         if (startDate || endDate) {
             filter.date = {};
-            if (startDate) filter.date.$gte = moment(startDate).startOf('day').toDate();
-            if (endDate) filter.date.$lte = moment(endDate).endOf('day').toDate();
+            if (startDate) filter.date.$gte = moment(startDate).utc().startOf('day').toDate();
+            if (endDate) filter.date.$lte = moment(endDate).utc().endOf('day').toDate();
         }
 
         // Real-time status filters
@@ -737,7 +744,8 @@ const attendanceService = {
         const user = await User.findById(userId).select('employment.timezone').lean();
         const timezone = user?.employment?.timezone || 'Asia/Kolkata';
         
-        const today = moment(now).tz(timezone).startOf('day').toDate();
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const today = moment.utc(todayStr).toDate();
         const incompleteAttendance = await Attendance.findOne({
             employeeId: userId,
             date: { $lt: today },
@@ -765,8 +773,8 @@ const attendanceService = {
 
     getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, search, status, isLate }) => {
         const skip = (page - 1) * limit;
-        const start = moment(startDate || getRealTime()).startOf('day').toDate();
-        const end = moment(endDate || getRealTime()).endOf('day').toDate();
+        const start = moment(startDate || getRealTime()).utc().startOf('day').toDate();
+        const end = moment(endDate || getRealTime()).utc().endOf('day').toDate();
 
         // 1. Build User Filter
         const userFilter = { isActive: true };
@@ -893,8 +901,8 @@ const attendanceService = {
     },
 
     getStats: async ({ date, department, designation }) => {
-        const start = moment(date || getRealTime()).startOf('day').toDate();
-        const end = moment(date || getRealTime()).endOf('day').toDate();
+        const start = moment(date || getRealTime()).utc().startOf('day').toDate();
+        const end = moment(date || getRealTime()).utc().endOf('day').toDate();
 
         // 1. Build User Filter
         const userFilter = { isActive: true };
