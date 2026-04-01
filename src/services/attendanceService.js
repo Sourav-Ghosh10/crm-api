@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Leave = require('../models/Leave');
 const { ATTENDANCE_STATUS } = require('../config/constants');
 const { BadRequestError, NotFoundError } = require('../utils/errors');
-const moment = require('moment');
+const moment = require('moment-timezone');
 const logger = require('../utils/logger');
 const holidayService = require('./holidayService');
 const { getRealTime } = require('../utils/realTime');
@@ -24,8 +24,8 @@ const formatDuration = (ms) => {
 };
 
 // Shared Helper: Enrich attendance record with real-time durations
-const enrichAttendanceRecord = (record) => {
-    const isToday = moment.utc(record.date).isSame(moment.utc(), 'day');
+const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
+    const isToday = moment(getRealTime()).tz(timezone).isSame(moment(record.date).tz(timezone), 'day');
 
     let totalGrossMs = 0;
     let totalBreakMs = 0;
@@ -100,9 +100,15 @@ const enrichAttendanceRecord = (record) => {
 const attendanceService = {
     clockIn: async (userId, payload) => {
         const now = getRealTime();
-        const today = moment(now).utc().startOf('day').toDate();
+        
+        // 1. Fetch User first to get timezone
+        const user = await User.findById(userId).lean();
+        if (!user) throw new NotFoundError('User not found');
 
-        // 1. Check if attendance record for today exists
+        const timezone = user.employment?.timezone || 'Asia/Kolkata';
+        const today = moment(now).tz(timezone).startOf('day').toDate();
+
+        // 2. Check if attendance record for today exists
         let attendance = await Attendance.findOne({
             employeeId: userId,
             date: today,
@@ -115,10 +121,6 @@ const attendanceService = {
                 throw new BadRequestError(`DEBUG_ERR: User ${userId} already has open session in record ${attendance._id} (date ${attendance.date.toISOString()})`);
             }
         }
-
-        // 2. Fetch User
-        const user = await User.findById(userId).lean();
-        if (!user) throw new NotFoundError('User not found');
 
         // 3. Check Schedule
         const schedule = await Schedule.findOne({
@@ -146,8 +148,8 @@ const attendanceService = {
 
                 // 2. Time Buffer Check: Can only clock in within 30 mins before shift starts
                 const shiftStartTimeStr = schedule.startTime[currentSessionIndex];
-                const shiftStart = moment(`${moment(today).format('YYYY-MM-DD')} ${shiftStartTimeStr}`, 'YYYY-MM-DD HH:mm');
-                const checkInTime = moment(now);
+                const shiftStart = moment.tz(`${moment(today).format('YYYY-MM-DD')} ${shiftStartTimeStr}`, 'YYYY-MM-DD HH:mm', timezone);
+                const checkInTime = moment(now).tz(timezone);
 
                 const bufferStartTime = moment(shiftStart).subtract(30, 'minutes');
 
@@ -192,7 +194,12 @@ const attendanceService = {
 
     clockOut: async (userId, payload) => {
         const now = getRealTime();
-        const today = moment(now).utc().startOf('day').toDate();
+        
+        const user = await User.findById(userId).select('employment.timezone').lean();
+        if (!user) throw new NotFoundError('User not found');
+        
+        const timezone = user.employment?.timezone || 'Asia/Kolkata';
+        const today = moment(now).tz(timezone).startOf('day').toDate();
         
         const attendance = await Attendance.findOne({
             employeeId: userId,
@@ -231,8 +238,8 @@ const attendanceService = {
         const schedule = await Schedule.findOne({ employeeId: userId, date: today });
         if (schedule && schedule.shiftType !== 'off' && schedule.endTime && schedule.endTime.length > sessionIndex) {
             const shiftEndTimeStr = schedule.endTime[sessionIndex];
-            const shiftEnd = moment(`${moment(today).format('YYYY-MM-DD')} ${shiftEndTimeStr}`, 'YYYY-MM-DD HH:mm');
-            if (moment(now).isBefore(shiftEnd)) {
+            const shiftEnd = moment.tz(`${moment(today).format('YYYY-MM-DD')} ${shiftEndTimeStr}`, 'YYYY-MM-DD HH:mm', timezone);
+            if (moment(now).tz(timezone).isBefore(shiftEnd)) {
                 lastSession.isEarlyLeave = true;
             }
         }
@@ -256,7 +263,10 @@ const attendanceService = {
     },
 
     startBreak: async (userId) => {
-        const today = moment(getRealTime()).utc().startOf('day').toDate();
+        const now = getRealTime();
+        const user = await User.findById(userId).select('employment.timezone').lean();
+        const timezone = user?.employment?.timezone || 'Asia/Kolkata';
+        const today = moment(now).tz(timezone).startOf('day').toDate();
         const attendance = await Attendance.findOne({ employeeId: userId, date: today });
 
         if (!attendance) throw new BadRequestError('Not clocked in');
@@ -286,7 +296,10 @@ const attendanceService = {
     },
 
     resumeWork: async (userId) => {
-        const today = moment(getRealTime()).utc().startOf('day').toDate();
+        const now = getRealTime();
+        const user = await User.findById(userId).select('employment.timezone').lean();
+        const timezone = user?.employment?.timezone || 'Asia/Kolkata';
+        const today = moment(now).tz(timezone).startOf('day').toDate();
         const attendance = await Attendance.findOne({ employeeId: userId, date: today });
 
         if (!attendance) throw new BadRequestError('Not clocked in');
@@ -311,13 +324,17 @@ const attendanceService = {
 
     getAttendanceStatus: async (userId) => {
         const now = getRealTime();
-        const today = moment(now).utc().startOf('day').toDate();
-        const monthStart = moment(now).utc().startOf('month').toDate();
-        const monthEnd = moment(now).utc().endOf('month').toDate();
+        
+        // Fetch user basic info including timezone
+        const userBasic = await User.findById(userId).select('employment.timezone isHolidayApplicable').lean();
+        const timezone = userBasic?.employment?.timezone || 'Asia/Kolkata';
 
-        const [attendance, user, holidays, schedules, monthlyAttendanceCount] = await Promise.all([
+        const today = moment(now).tz(timezone).startOf('day').toDate();
+        const monthStart = moment(now).tz(timezone).startOf('month').toDate();
+        const monthEnd = moment(now).tz(timezone).endOf('month').toDate();
+
+        const [attendance, holidays, schedules, monthlyAttendanceCount] = await Promise.all([
             Attendance.findOne({ employeeId: userId, date: today }).lean(),
-            User.findById(userId).select('isHolidayApplicable').lean(),
             holidayService.getHolidaysInRange(monthStart, monthEnd),
             Schedule.find({
                 employeeId: userId,
@@ -330,17 +347,17 @@ const attendanceService = {
         ]);
 
         // Calculate monthly off days and target hours
-        const isHolidayApplicable = user ? user.isHolidayApplicable : true;
-        const holidayDates = isHolidayApplicable ? holidays.map(h => moment(h.date).format('YYYY-MM-DD')) : [];
-        const shiftDates = schedules.filter(s => s.shiftType !== 'off').map(s => moment(s.date).format('YYYY-MM-DD'));
+        const isHolidayApplicable = userBasic ? userBasic.isHolidayApplicable : true;
+        const holidayDates = isHolidayApplicable ? holidays.map(h => moment(h.date).tz(timezone).format('YYYY-MM-DD')) : [];
+        const shiftDates = schedules.filter(s => s.shiftType !== 'off').map(s => moment(s.date).tz(timezone).format('YYYY-MM-DD'));
 
         let monthlyTargetHours = 0;
         schedules.forEach(s => {
             if (s.shiftType !== 'off' && s.startTime && s.endTime) {
                 const len = Math.min(s.startTime.length, s.endTime.length);
                 for (let i = 0; i < len; i++) {
-                    const start = moment(s.startTime[i], 'HH:mm');
-                    const end = moment(s.endTime[i], 'HH:mm');
+                    const start = moment.tz(s.startTime[i], 'HH:mm', timezone);
+                    const end = moment.tz(s.endTime[i], 'HH:mm', timezone);
                     if (end.isAfter(start)) {
                         monthlyTargetHours += end.diff(start, 'hours', true);
                     }
@@ -349,9 +366,9 @@ const attendanceService = {
         });
 
         const offDays = [];
-        const daysInMonth = moment.utc().daysInMonth();
+        const daysInMonth = moment(now).tz(timezone).daysInMonth();
         for (let i = 1; i <= daysInMonth; i++) {
-            const dateStr = moment.utc().date(i).format('YYYY-MM-DD');
+            const dateStr = moment(now).tz(timezone).date(i).format('YYYY-MM-DD');
             if (!holidayDates.includes(dateStr) && !shiftDates.includes(dateStr)) {
                 offDays.push(dateStr);
             }
@@ -359,8 +376,8 @@ const attendanceService = {
 
         // Calculate Attendance Percentage (Present Days / Expected Work Days So Far)
         let expectedWorkDaysSoFar = 0;
-        const currentMoment = moment.utc(monthStart);
-        const todayMoment = moment.utc(today);
+        const currentMoment = moment(monthStart).tz(timezone);
+        const todayMoment = moment(today).tz(timezone);
 
         while (currentMoment.isSameOrBefore(todayMoment)) {
             const dateStr = currentMoment.format('YYYY-MM-DD');
@@ -403,7 +420,7 @@ const attendanceService = {
                     incompleteShift: {
                         shiftId: incompleteAttendance._id,
                         loginTime: lastSession.checkIn.time,
-                        shiftDate: moment(incompleteAttendance.date).format('YYYY-MM-DD')
+                        shiftDate: moment(incompleteAttendance.date).tz(timezone).format('YYYY-MM-DD')
                     }
                 };
             }
@@ -424,7 +441,7 @@ const attendanceService = {
             };
         }
 
-        const enriched = enrichAttendanceRecord(attendance);
+        const enriched = enrichAttendanceRecord(attendance, timezone);
         const lastSession = enriched.sessions[enriched.sessions.length - 1];
         const lastBreak = enriched.breaks[enriched.breaks.length - 1];
         const isClockedIn = !!(lastSession && (!lastSession.checkOut || !lastSession.checkOut.time));
@@ -525,7 +542,7 @@ const attendanceService = {
         }
 
         const attendanceRecords = await Attendance.find(filter)
-            .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable')
+            .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable employment.timezone')
             .sort({ date: -1 })
             .skip(skip)
             .limit(limit)
@@ -537,7 +554,7 @@ const attendanceService = {
         const endDate_ = dates.length > 0 ? moment.max(dates.map(d => moment(d))).toDate() : null;
         const holidays = (startDate_ && endDate_) ? await holidayService.getHolidaysInRange(startDate_, endDate_) : [];
 
-        const holidayDates = holidays.map(h => moment(h.date).format('YYYY-MM-DD'));
+        const holidayDates = holidays.map(h => moment(h.date).format('YYYY-MM-DD')); // Holidays in DB are already calendar dates
 
         // Add fullName and holiday info
         const attendance = attendanceRecords.map(record => {
@@ -546,7 +563,8 @@ const attendanceService = {
             }
 
             // Check holiday
-            const dateStr = moment(record.date).format('YYYY-MM-DD');
+            const userTimezone = record.employeeId?.employment?.timezone || 'Asia/Kolkata';
+            const dateStr = moment(record.date).tz(userTimezone).format('YYYY-MM-DD');
             record.isHoliday = holidayDates.includes(dateStr) && (record.employeeId ? record.employeeId.isHolidayApplicable : true);
             if (record.isHoliday) {
                 const holiday = holidays.find(h => moment(h.date).format('YYYY-MM-DD') === dateStr);
@@ -554,7 +572,7 @@ const attendanceService = {
             }
 
             // Enrich with duration strings
-            return enrichAttendanceRecord(record);
+            return enrichAttendanceRecord(record, record.employeeId?.employment?.timezone);
         });
 
         const total = await Attendance.countDocuments(filter);
@@ -578,12 +596,12 @@ const attendanceService = {
         if (status) filter.status = status;
         if (startDate || endDate) {
             filter.date = {};
-            if (startDate) filter.date.$gte = moment(startDate).startOf('day').toDate();
-            if (endDate) filter.date.$lte = moment(endDate).endOf('day').toDate();
+            if (startDate) filter.date.$gte = moment(startDate).utc().startOf('day').toDate();
+            if (endDate) filter.date.$lte = moment(endDate).utc().endOf('day').toDate();
         }
 
         const attendanceRecords = await Attendance.find(filter)
-            .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable')
+            .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable employment.timezone')
             .sort({ date: -1 })
             .skip(skip)
             .limit(limit)
@@ -595,6 +613,8 @@ const attendanceService = {
         const endDate_ = dates.length > 0 ? moment.max(dates.map(d => moment(d))).toDate() : null;
         const holidays = (startDate_ && endDate_) ? await holidayService.getHolidaysInRange(startDate_, endDate_) : [];
 
+        const userDetailed = await User.findById(userId).select('employment.timezone').lean();
+        const userTimezone = userDetailed?.employment?.timezone || 'Asia/Kolkata';
         const holidayDates = holidays.map(h => moment(h.date).format('YYYY-MM-DD'));
 
         // Add fullName and holiday info
@@ -604,7 +624,7 @@ const attendanceService = {
             }
 
             // Check holiday
-            const dateStr = moment(record.date).format('YYYY-MM-DD');
+            const dateStr = moment(record.date).tz(userTimezone).format('YYYY-MM-DD');
             record.isHoliday = holidayDates.includes(dateStr) && (record.employeeId ? record.employeeId.isHolidayApplicable : true);
             if (record.isHoliday) {
                 const holiday = holidays.find(h => moment(h.date).format('YYYY-MM-DD') === dateStr);
@@ -612,7 +632,7 @@ const attendanceService = {
             }
 
             // Enrich with duration strings
-            return enrichAttendanceRecord(record);
+            return enrichAttendanceRecord(record, record.employeeId?.employment?.timezone);
         });
 
         const total = await Attendance.countDocuments(filter);
@@ -630,7 +650,7 @@ const attendanceService = {
 
     getAttendanceById: async (id) => {
         const attendance = await Attendance.findById(id)
-            .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable')
+            .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable employment.timezone')
             .lean();
 
         if (!attendance) {
@@ -643,7 +663,8 @@ const attendanceService = {
         }
 
         // Check holiday
-        const attendanceDate = moment(attendance.date).startOf('day').toDate();
+        const employeeTimezone = attendance.employeeId?.employment?.timezone || 'Asia/Kolkata';
+        const attendanceDate = moment(attendance.date).tz(employeeTimezone).startOf('day').toDate();
         const holidays_ = await holidayService.getHolidaysInRange(attendanceDate, attendanceDate);
         const holiday = holidays_[0];
 
@@ -655,11 +676,14 @@ const attendanceService = {
         }
 
         // Enrich with duration strings
-        return enrichAttendanceRecord(attendance);
+        return enrichAttendanceRecord(attendance, attendance.employeeId?.employment?.timezone);
     },
 
     correctLogout: async (userId, payload) => {
         const { shiftId, logoutTime, shiftDate, reason, remarks } = payload;
+        
+        const user = await User.findById(userId).select('employment.timezone').lean();
+        const timezone = user?.employment?.timezone || 'Asia/Kolkata';
 
         const attendance = await Attendance.findOne({
             _id: shiftId,
@@ -703,12 +727,17 @@ const attendanceService = {
         attendance.markModified('sessions');
 
         await attendance.save();
-
-        return enrichAttendanceRecord(attendance.toObject());
+        
+        const enriched = enrichAttendanceRecord(attendance.toObject(), timezone);
+        return enriched;
     },
 
     getIncompleteShiftStatus: async (userId) => {
-        const today = moment(getRealTime()).utc().startOf('day').toDate();
+        const now = getRealTime();
+        const user = await User.findById(userId).select('employment.timezone').lean();
+        const timezone = user?.employment?.timezone || 'Asia/Kolkata';
+        
+        const today = moment(now).tz(timezone).startOf('day').toDate();
         const incompleteAttendance = await Attendance.findOne({
             employeeId: userId,
             date: { $lt: today },
@@ -725,7 +754,7 @@ const attendanceService = {
                     requiresLogoutCorrection: true,
                     shiftId: incompleteAttendance._id,
                     loginTime: lastSession.checkIn.time,
-                    shiftDate: moment(incompleteAttendance.date).format('YYYY-MM-DD'),
+                    shiftDate: moment(incompleteAttendance.date).tz(timezone).format('YYYY-MM-DD'),
                     timestamp: getRealTime()
                 };
             }
@@ -763,7 +792,7 @@ const attendanceService = {
         // 2. Fetch Users (Paginated)
         const totalUsers = await User.countDocuments(userFilter);
         const users = await User.find(userFilter)
-            .select('personalInfo employment username employeeId isHolidayApplicable')
+            .select('personalInfo employment username employeeId isHolidayApplicable employment.timezone')
             .skip(skip)
             .limit(limit)
             .lean();
@@ -793,14 +822,15 @@ const attendanceService = {
         // 5. Build Combined Attendance List
         const attendance = users.map(user => {
             const record = attendanceRecords.find(r => r.employeeId.toString() === user._id.toString());
-            const dateStr = moment(start).format('YYYY-MM-DD');
-            const dayName = moment(start).format('dddd');
+            const userTimezone = user.employment?.timezone || 'Asia/Kolkata';
+            const dateStr = moment(start).tz(userTimezone).format('YYYY-MM-DD');
+            const dayName = moment(start).tz(userTimezone).format('dddd');
 
             // Find Leave
             const leave = leaves.find(l => {
-                const lStart = moment(l.startDate).startOf('day');
-                const lEnd = moment(l.endDate).endOf('day');
-                return moment(start).isBetween(lStart, lEnd, 'day', '[]');
+                const lStart = moment(l.startDate).tz(userTimezone).startOf('day');
+                const lEnd = moment(l.endDate).tz(userTimezone).endOf('day');
+                return moment(start).tz(userTimezone).isBetween(lStart, lEnd, 'day', '[]');
             });
 
             // Is Holiday
@@ -811,7 +841,7 @@ const attendanceService = {
 
             if (record) {
                 return {
-                    ...enrichAttendanceRecord(record),
+                    ...enrichAttendanceRecord(record, user.employment?.timezone),
                     name: `${user.personalInfo?.firstName} ${user.personalInfo?.lastName}`,
                     email: user.personalInfo?.email,
                     department: user.employment?.department

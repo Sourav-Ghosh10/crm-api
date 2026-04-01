@@ -69,6 +69,7 @@ const createUserSchema = Joi.object({
     employmentType: Joi.string().valid('full-time', 'part-time', 'contract', 'intern').default('full-time'),
     reportingManager: objectIdSchema.allow(null),
     location: Joi.string().max(100),
+    timezone: Joi.string().max(100).default('Asia/Kolkata'),
     workingHours: Joi.object({
       startTime: Joi.string().pattern(/^([01]\d|2[0-3]):([0-5]\d)$/),
       endTime: Joi.string().pattern(/^([01]\d|2[0-3]):([0-5]\d)$/),

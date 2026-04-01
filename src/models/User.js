@@ -89,6 +89,10 @@ const userSchema = new mongoose.Schema(
         index: true,
       },
       location: String,
+      timezone: {
+        type: String,
+        default: 'Asia/Kolkata',
+      },
       workingHours: {
         startTime: String,
         endTime: String,
