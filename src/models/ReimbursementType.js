@@ -36,8 +36,8 @@ const reimbursementTypeSchema = new mongoose.Schema(
     }
 );
 
-// Index for name and isActive
-reimbursementTypeSchema.index({ name: 1 });
+// Index for isActive is already defined inline
+// (name is already indexed due to unique: true)
 
 const ReimbursementType = mongoose.model('ReimbursementType', reimbursementTypeSchema);
 

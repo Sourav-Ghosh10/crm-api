@@ -24,9 +24,7 @@ const createUserSchema = Joi.object({
   employeeId: Joi.string()
     .uppercase()
     .trim()
-    .required()
-    .pattern(/^EMP\d{3,}$/)
-    .message('Employee ID must be in format EMP001'),
+    .required(),
   username: Joi.string()
     .lowercase()
     .trim()
