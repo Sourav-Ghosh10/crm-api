@@ -474,7 +474,7 @@ const attendanceService = {
     },
 
     getAllAttendance: async (query) => {
-        const { page = 1, limit = 20, employeeId, startDate, endDate, status, search, department, designation, isClockedIn, isOnBreak } = query;
+        const { page = 1, limit = 20, employeeId, startDate, endDate, status, search, department, designation, isClockedIn, isOnBreak, adminUserId } = query;
         const skip = (page - 1) * limit;
 
         const filter = {};
@@ -527,8 +527,16 @@ const attendanceService = {
         }
         if (startDate || endDate) {
             filter.date = {};
-            if (startDate) filter.date.$gte = moment(startDate).utc().startOf('day').toDate();
-            if (endDate) filter.date.$lte = moment(endDate).utc().endOf('day').toDate();
+            let TZ = 'Asia/Kolkata';
+            const targetUserId = employeeId || adminUserId;
+            if (targetUserId) {
+                const tzUser = await User.findById(targetUserId).select('employment.timezone').lean();
+                if (tzUser?.employment?.timezone) {
+                    TZ = tzUser.employment.timezone;
+                }
+            }
+            if (startDate) filter.date.$gte = moment.tz(startDate.length === 10 ? startDate : moment(startDate).tz(TZ).format('YYYY-MM-DD'), 'YYYY-MM-DD', TZ).startOf('day').toDate();
+            if (endDate) filter.date.$lte = moment.tz(endDate.length === 10 ? endDate : moment(endDate).tz(TZ).format('YYYY-MM-DD'), 'YYYY-MM-DD', TZ).endOf('day').toDate();
         }
 
         // Real-time status filters
@@ -603,8 +611,10 @@ const attendanceService = {
         if (status) filter.status = status;
         if (startDate || endDate) {
             filter.date = {};
-            if (startDate) filter.date.$gte = moment(startDate).utc().startOf('day').toDate();
-            if (endDate) filter.date.$lte = moment(endDate).utc().endOf('day').toDate();
+            const tzUser = await User.findById(userId).select('employment.timezone').lean();
+            const TZ = tzUser?.employment?.timezone || 'Asia/Kolkata';
+            if (startDate) filter.date.$gte = moment.tz(startDate.length === 10 ? startDate : moment(startDate).tz(TZ).format('YYYY-MM-DD'), 'YYYY-MM-DD', TZ).startOf('day').toDate();
+            if (endDate) filter.date.$lte = moment.tz(endDate.length === 10 ? endDate : moment(endDate).tz(TZ).format('YYYY-MM-DD'), 'YYYY-MM-DD', TZ).endOf('day').toDate();
         }
 
         const attendanceRecords = await Attendance.find(filter)
@@ -771,10 +781,20 @@ const attendanceService = {
         return { requiresLogoutCorrection: false };
     },
 
-    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, search, status, isLate }) => {
+    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, search, status, isLate, adminUserId }) => {
         const skip = (page - 1) * limit;
-        const start = moment(startDate || getRealTime()).utc().startOf('day').toDate();
-        const end = moment(endDate || getRealTime()).utc().endOf('day').toDate();
+        
+        // Dynamically fetch admin/requester timezone
+        let DEFAULT_TZ = 'Asia/Kolkata';
+        if (adminUserId) {
+            const adminUser = await User.findById(adminUserId).select('employment.timezone').lean();
+            if (adminUser?.employment?.timezone) DEFAULT_TZ = adminUser.employment.timezone;
+        }
+
+        const startStr = startDate || moment(getRealTime()).tz(DEFAULT_TZ).format('YYYY-MM-DD');
+        const endStr = endDate || moment(getRealTime()).tz(DEFAULT_TZ).format('YYYY-MM-DD');
+        const start = moment.tz(startStr, 'YYYY-MM-DD', DEFAULT_TZ).startOf('day').toDate();
+        const end = moment.tz(endStr, 'YYYY-MM-DD', DEFAULT_TZ).endOf('day').toDate();
 
         // 1. Build User Filter
         const userFilter = { isActive: true };
@@ -800,7 +820,7 @@ const attendanceService = {
         // 2. Fetch Users (Paginated)
         const totalUsers = await User.countDocuments(userFilter);
         const users = await User.find(userFilter)
-            .select('personalInfo employment username employeeId isHolidayApplicable employment.timezone')
+            .select('personalInfo employment username employeeId isHolidayApplicable')
             .skip(skip)
             .limit(limit)
             .lean();
@@ -900,9 +920,17 @@ const attendanceService = {
         };
     },
 
-    getStats: async ({ date, department, designation }) => {
-        const start = moment(date || getRealTime()).utc().startOf('day').toDate();
-        const end = moment(date || getRealTime()).utc().endOf('day').toDate();
+    getStats: async ({ date, department, designation, adminUserId }) => {
+        // Dynamically fetch admin/requester timezone
+        let DEFAULT_TZ = 'Asia/Kolkata';
+        if (adminUserId) {
+            const adminUser = await User.findById(adminUserId).select('employment.timezone').lean();
+            if (adminUser?.employment?.timezone) DEFAULT_TZ = adminUser.employment.timezone;
+        }
+
+        const dateStr = date ? (typeof date === 'string' && date.length === 10 ? date : moment(date).tz(DEFAULT_TZ).format('YYYY-MM-DD')) : moment(getRealTime()).tz(DEFAULT_TZ).format('YYYY-MM-DD');
+        const start = moment.tz(dateStr, 'YYYY-MM-DD', DEFAULT_TZ).startOf('day').toDate();
+        const end = moment.tz(dateStr, 'YYYY-MM-DD', DEFAULT_TZ).endOf('day').toDate();
 
         // 1. Build User Filter
         const userFilter = { isActive: true };

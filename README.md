@@ -1,5 +1,5 @@
 
-# # Pulse Ops - Backend API
+# # CodecIT - Backend API
 
 A comprehensive HR Management System backend built with Node.js, Express, MongoDB, and Redis.
 

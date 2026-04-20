@@ -105,6 +105,9 @@ app.use('/api/reimbursements', require('./routes/reimbursementRoutes'));
 app.use('/api/reimbursement-types', require('./routes/reimbursementTypeRoutes'));
 app.use('/api/roles', require('./routes/roleRoutes'));
 app.use('/api/announcements', require('./routes/announcementRoutes'));
+app.use('/api/payroll/masters', require('./routes/allowanceDeductionRoutes'));
+app.use('/api/payroll/salary-configs', require('./routes/salaryConfigRoutes'));
+app.use('/api/payroll/payslips', require('./routes/payslipRoutes'));
 // app.use('/api/leave-policies', require('./routes/leavePolicyRoutes'));
 
 app.get('/api/list-attendance', async (req, res) => {
@@ -123,7 +126,7 @@ app.get('/api', (req, res) => {
   const mongoose = require('mongoose');
   res.status(200).json({
     success: true,
-    message: 'Pulse Ops API',
+    message: 'CodecIT API',
     version: '1.0.0',
     db: mongoose.connection.db?.databaseName,
     host: mongoose.connection.host

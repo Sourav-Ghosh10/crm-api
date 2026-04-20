@@ -89,7 +89,7 @@ const attendanceController = {
 
     getAllAttendance: async (req, res, next) => {
         try {
-            const result = await attendanceService.getAllAttendance(req.query);
+            const result = await attendanceService.getAllAttendance({ ...req.query, adminUserId: req.user.id });
             res.status(200).json({
                 success: true,
                 message: 'Attendance list fetched successfully',
@@ -151,7 +151,7 @@ const attendanceController = {
     },
     getAttendanceSummary: async (req, res, next) => {
         try {
-            const result = await attendanceService.getSummary(req.query);
+            const result = await attendanceService.getSummary({ ...req.query, adminUserId: req.user.id });
             res.status(200).json({
                 success: true,
                 message: 'Attendance summary fetched successfully',
@@ -163,7 +163,7 @@ const attendanceController = {
     },
     getAttendanceStats: async (req, res, next) => {
         try {
-            const result = await attendanceService.getStats(req.query);
+            const result = await attendanceService.getStats({ ...req.query, adminUserId: req.user.id });
             res.status(200).json({
                 success: true,
                 message: 'Attendance stats fetched successfully',

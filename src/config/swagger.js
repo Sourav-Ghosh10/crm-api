@@ -6,11 +6,11 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Pulse Ops API',
+      title: 'CodecIT API',
       version: '1.0.0',
-      description: 'API documentation for Pulse Ops - HR Management System',
+      description: 'API documentation for CodecIT - HR Management System',
       contact: {
-        name: 'Pulse Ops Team',
+        name: 'CodecIT Team',
       },
     },
     servers: [

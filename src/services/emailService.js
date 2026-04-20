@@ -30,13 +30,13 @@ const emailService = {
   },
 
   sendWelcomeEmail: async (user) => {
-    const subject = 'Welcome to Pulse Ops';
-    const text = `Hi ${user.personalInfo.firstName},\n\nWelcome to Pulse Ops! Your account has been created successfully.\n\nBest regards,\nPulse Ops Team`;
+    const subject = 'Welcome to CodecIT';
+    const text = `Hi ${user.personalInfo.firstName},\n\nWelcome to CodecIT! Your account has been created successfully.\n\nBest regards,\nCodecIT Team`;
     const html = `
-      <h2>Welcome to Pulse Ops</h2>
+      <h2>Welcome to CodecIT</h2>
       <p>Hi ${user.personalInfo.firstName},</p>
-      <p>Welcome to Pulse Ops! Your account has been created successfully.</p>
-      <p>Best regards,<br/>Pulse Ops Team</p>
+      <p>Welcome to CodecIT! Your account has been created successfully.</p>
+      <p>Best regards,<br/>CodecIT Team</p>
     `;
 
     return emailService.sendEmail({
@@ -50,14 +50,14 @@ const emailService = {
   sendPasswordResetEmail: async (user, resetToken) => {
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
     const subject = 'Password Reset Request';
-    const text = `Hi ${user.personalInfo.firstName},\n\nYou requested a password reset. Please click the link below to reset your password:\n\n${resetUrl}\n\nIf you didn't request this, please ignore this email.\n\nBest regards,\nPulse Ops Team`;
+    const text = `Hi ${user.personalInfo.firstName},\n\nYou requested a password reset. Please click the link below to reset your password:\n\n${resetUrl}\n\nIf you didn't request this, please ignore this email.\n\nBest regards,\nCodecIT Team`;
     const html = `
       <h2>Password Reset Request</h2>
       <p>Hi ${user.personalInfo.firstName},</p>
       <p>You requested a password reset. Please click the link below to reset your password:</p>
       <p><a href="${resetUrl}">Reset Password</a></p>
       <p>If you didn't request this, please ignore this email.</p>
-      <p>Best regards,<br/>Pulse Ops Team</p>
+      <p>Best regards,<br/>CodecIT Team</p>
     `;
 
     return emailService.sendEmail({
@@ -70,12 +70,12 @@ const emailService = {
 
   sendLeaveApprovalEmail: async (user, leaveRequest) => {
     const subject = 'Leave Request Approved';
-    const text = `Hi ${user.personalInfo.firstName},\n\nYour leave request from ${leaveRequest.startDate.toDateString()} to ${leaveRequest.endDate.toDateString()} has been approved.\n\nBest regards,\nPulse Ops Team`;
+    const text = `Hi ${user.personalInfo.firstName},\n\nYour leave request from ${leaveRequest.startDate.toDateString()} to ${leaveRequest.endDate.toDateString()} has been approved.\n\nBest regards,\nCodecIT Team`;
     const html = `
       <h2>Leave Request Approved</h2>
       <p>Hi ${user.personalInfo.firstName},</p>
       <p>Your leave request from ${leaveRequest.startDate.toDateString()} to ${leaveRequest.endDate.toDateString()} has been approved.</p>
-      <p>Best regards,<br/>Pulse Ops Team</p>
+      <p>Best regards,<br/>CodecIT Team</p>
     `;
 
     return emailService.sendEmail({
