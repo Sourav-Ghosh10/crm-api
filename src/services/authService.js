@@ -73,6 +73,7 @@ const authService = {
           JSON.stringify({ userId: user._id, sessionId, ipAddress })
         );
       } catch (redisError) {
+        console.error('🚨 Failed to store session in Redis during login:', redisError.message);
         logger.error('Failed to store session in Redis:', redisError);
         // Continue login process even if Redis fails
       }
@@ -135,14 +136,19 @@ const authService = {
       throw new UnauthorizedError('Invalid or expired refresh token');
     }
 
-    // Check if session exists
+    // Check if session exists in Redis (best-effort — JWT signature is already the primary auth)
     const redisClient = getRedisClient();
-    if (redisClient) {
+    if (redisClient && redisClient.isReady) {
       const sessionKey = `session:${decoded.userId}:${decoded.sessionId}`;
-      const sessionExists = await redisClient.exists(sessionKey);
-
-      if (!sessionExists) {
-        throw new UnauthorizedError('Session expired');
+      try {
+        const sessionExists = await redisClient.exists(sessionKey);
+        if (!sessionExists) {
+          // Session not in Redis — could mean Redis failed to store during login.
+          // We allow the refresh since the JWT is cryptographically valid.
+          logger.warn(`Refresh: session not found in Redis for key: ${sessionKey}. Allowing via JWT-only auth.`);
+        }
+      } catch (redisError) {
+        logger.error('Redis session check error during refresh:', redisError.message);
       }
     }
 

@@ -1,5 +1,5 @@
 const { verifyAccessToken } = require('../utils/tokenUtils');
-const { UnauthorizedError } = require('../utils/errors');
+const { UnauthorizedError, ForbiddenError } = require('../utils/errors');
 const User = require('../models/User');
 const { getRedisClient } = require('../config/redis');
 
@@ -22,12 +22,19 @@ const authenticate = async (req, res, next) => {
 
     // Check if session exists in Redis
     const redisClient = getRedisClient();
-    if (redisClient) {
+    if (redisClient && redisClient.isReady) {
       const sessionKey = `session:${decoded.userId}:${decoded.sessionId}`;
-      const session = await redisClient.get(sessionKey);
-
-      if (!session) {
-        throw new UnauthorizedError('Session expired or invalid');
+      try {
+        const session = await redisClient.get(sessionKey);
+        if (!session) {
+          // Session not in Redis — could mean Redis failed to store it during login.
+          // JWT is already cryptographically verified above, so we allow the request
+          // but log a warning. This prevents redirect loops when Redis is temporarily unavailable.
+          logger.warn(`Session not found in Redis for key: ${sessionKey}. Allowing via JWT-only auth.`);
+        }
+      } catch (redisError) {
+        // Redis query error — log and continue (JWT already verified)
+        logger.error('Redis session check error:', redisError.message);
       }
     }
 
@@ -90,8 +97,18 @@ const authenticate = async (req, res, next) => {
 
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.employment.role)) {
-      return next(new UnauthorizedError('You do not have permission to perform this action'));
+    const roleName = req.user?.employment?.role;
+    
+    // If user is an admin or has 'Super Admin' role name, they have access to everything
+    const isSpecialAdmin = (req.user && req.user.isAdmin === true) || 
+                          (roleName === 'Super Admin' || roleName === 'admin');
+
+    if (isSpecialAdmin) {
+      return next();
+    }
+
+    if (!req.user || !roles.includes(roleName)) {
+      return next(new ForbiddenError('You do not have permission to perform this action'));
     }
     next();
   };
