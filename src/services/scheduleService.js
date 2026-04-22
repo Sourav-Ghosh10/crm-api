@@ -272,7 +272,7 @@ const ensureRosterGenerated = async (user, startMoment, endMoment) => {
                         document: {
                             employeeId: user._id,
                             date: dateKey,
-                            shiftType: 'day',
+                            shiftType: (workingHours.startTime && workingHours.endTime && workingHours.startTime > workingHours.endTime) ? 'night' : 'day',
                             // Wrap legacy single strings from User model into arrays
                             startTime: [workingHours.startTime || '09:00'],
                             endTime: [workingHours.endTime || '18:00'],

@@ -1,11 +1,8 @@
 const Joi = require('joi');
-const { REIMBURSEMENT_TYPES, REIMBURSEMENT_STATUS, PAYMENT_MODES } = require('../config/constants');
+const { REIMBURSEMENT_STATUS, PAYMENT_MODES } = require('../config/constants');
 
 const createReimbursementSchema = Joi.object({
-    reimbursementType: Joi.string()
-        .lowercase()
-        .valid(...Object.values(REIMBURSEMENT_TYPES))
-        .required(),
+    reimbursementType: Joi.string().trim(),
     reimbursementTypeId: Joi.string().required(),
     title: Joi.string().required().trim(),
     description: Joi.string().allow('', null).trim(),
@@ -20,9 +17,7 @@ const createReimbursementSchema = Joi.object({
 });
 
 const updateReimbursementSchema = Joi.object({
-    reimbursementType: Joi.string()
-        .lowercase()
-        .valid(...Object.values(REIMBURSEMENT_TYPES)),
+    reimbursementType: Joi.string().trim(),
     title: Joi.string().trim(),
     description: Joi.string().allow('', null).trim(),
     amount: Joi.number().min(0),
@@ -58,7 +53,7 @@ const reimbursementQuerySchema = Joi.object({
     page: Joi.number().integer().min(1),
     limit: Joi.number().integer().min(1).max(100),
     status: Joi.string().lowercase().valid(...Object.values(REIMBURSEMENT_STATUS)),
-    reimbursementType: Joi.string().lowercase().valid(...Object.values(REIMBURSEMENT_TYPES)),
+    reimbursementType: Joi.string().allow('', null),
     employeeId: Joi.string().regex(/^[0-9a-fA-F]{24}$/),
     search: Joi.string().allow('', null),
     startDate: Joi.date().iso(),
