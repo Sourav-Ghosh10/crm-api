@@ -48,7 +48,8 @@ const attendanceController = {
 
     startBreak: async (req, res, next) => {
         try {
-            const result = await attendanceService.startBreak(req.user.id);
+            const { breakTypeId } = req.body;
+            const result = await attendanceService.startBreak(req.user.id, breakTypeId);
 
             res.status(200).json({
                 success: true,

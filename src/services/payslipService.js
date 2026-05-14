@@ -1,6 +1,9 @@
 const Payslip = require('../models/Payslip');
 const SalaryConfig = require('../models/SalaryConfig');
 const AllowanceDeductionMaster = require('../models/AllowanceDeductionMaster');
+const User = require('../models/User');
+const emailService = require('./emailService');
+const { generatePayslipPDF } = require('../utils/pdfGenerator');
 const { NotFoundError, ConflictError } = require('../utils/errors');
 const logger = require('../utils/logger');
 
@@ -246,6 +249,33 @@ const payslipService = {
     }
     logger.info(`Payslip deleted: ${id}`);
     return payslip;
+  },
+
+  sendPayslipEmail: async (id) => {
+    const payslip = await Payslip.findById(id).populate('employeeId');
+    if (!payslip) {
+      throw new NotFoundError('Payslip not found');
+    }
+
+    const user = payslip.employeeId;
+    if (!user || !user.personalInfo?.email) {
+      throw new ConflictError('Employee email not found');
+    }
+
+    let pdfBuffer = null;
+    try {
+      pdfBuffer = await generatePayslipPDF(payslip, user);
+    } catch (pdfError) {
+      logger.error('PDF generation failed:', pdfError);
+      // We continue without PDF if generation fails, or we could throw error
+    }
+
+    const success = await emailService.sendPayslipEmail(user, payslip, pdfBuffer);
+    if (!success) {
+      throw new Error('Failed to send payslip email');
+    }
+
+    return true;
   }
 };
 

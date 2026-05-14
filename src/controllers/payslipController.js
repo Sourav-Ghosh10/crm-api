@@ -86,6 +86,18 @@ const payslipController = {
       next(error);
     }
   },
+
+  sendPayslipEmail: async (req, res, next) => {
+    try {
+      await payslipService.sendPayslipEmail(req.params.id);
+      res.status(200).json({
+        success: true,
+        message: 'Payslip sent to email successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 module.exports = payslipController;

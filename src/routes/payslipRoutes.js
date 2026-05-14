@@ -164,5 +164,6 @@ router.delete('/:id', validate(idParamSchema, 'params'), payslipController.delet
  *         description: Status updated
  */
 router.patch('/:id/status', validate(idParamSchema, 'params'), validate(updatePayslipStatusSchema), payslipController.updateStatus);
+router.post('/:id/send-email', validate(idParamSchema, 'params'), payslipController.sendPayslipEmail);
 
 module.exports = router;

@@ -264,7 +264,7 @@ const attendanceService = {
         return attendance;
     },
 
-    startBreak: async (userId) => {
+    startBreak: async (userId, breakTypeId) => {
         const now = getRealTime();
         const user = await User.findById(userId).select('employment.timezone').lean();
         const timezone = user?.employment?.timezone || 'Asia/Kolkata';
@@ -292,7 +292,10 @@ const attendanceService = {
             throw new BadRequestError('You can take only 10 breaks in a session');
         }
 
-        attendance.breaks.push({ startTime: getRealTime() });
+        attendance.breaks.push({ 
+            startTime: getRealTime(),
+            breakType: breakTypeId 
+        });
         await attendance.save();
 
         return attendance;
@@ -341,7 +344,7 @@ const attendanceService = {
         const monthEnd = moment.utc(monthEndStr).toDate();
 
         const [attendance, holidays, schedules, monthlyAttendanceCount] = await Promise.all([
-            Attendance.findOne({ employeeId: userId, date: today }).lean(),
+            Attendance.findOne({ employeeId: userId, date: today }).populate('breaks.breakType').lean(),
             holidayService.getHolidaysInRange(monthStart, monthEnd),
             Schedule.find({
                 employeeId: userId,
@@ -558,6 +561,7 @@ const attendanceService = {
 
         const attendanceRecords = await Attendance.find(filter)
             .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable employment.timezone')
+            .populate('breaks.breakType')
             .sort({ date: -1 })
             .skip(skip)
             .limit(limit)
@@ -619,6 +623,7 @@ const attendanceService = {
 
         const attendanceRecords = await Attendance.find(filter)
             .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable employment.timezone')
+            .populate('breaks.breakType')
             .sort({ date: -1 })
             .skip(skip)
             .limit(limit)
@@ -668,6 +673,7 @@ const attendanceService = {
     getAttendanceById: async (id) => {
         const attendance = await Attendance.findById(id)
             .populate('employeeId', 'username personalInfo.firstName personalInfo.lastName personalInfo.email isHolidayApplicable employment.timezone')
+            .populate('breaks.breakType')
             .lean();
 
         if (!attendance) {

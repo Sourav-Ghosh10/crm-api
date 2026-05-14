@@ -51,3 +51,7 @@ debug/
 
 # Test files
 *.test.js.snap
+jest.config.js
+__tests__/*
+scratch/*
+scripts/*

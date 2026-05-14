@@ -276,6 +276,43 @@ router.put('/:id', validate(updateScheduleSchema), scheduleController.updateSche
  *       200:
  *         description: Roster generation started
  */
-router.post('/generate-roster', scheduleController.generateAllRosters);
+/**
+ * @swagger
+ * /api/schedules/sync-with-working-hours:
+ *   post:
+ *     summary: Sync future schedules with user working hours
+ *     description: Updates existing future schedules to match the workingHours defined in the user profile.
+ *     tags: [Schedules]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               userId:
+ *                 type: string
+ *                 description: Optional. If provided, syncs only for this user. If omitted, syncs for all active users.
+ *     responses:
+ *       200:
+ *         description: Schedules synchronized successfully
+ */
+router.post('/sync-with-working-hours', scheduleController.syncSchedulesWithWorkingHours);
+
+/**
+ * @swagger
+ * /api/schedules/reset-roster:
+ *   post:
+ *     summary: Reset and regenerate roster up to upcoming Sunday
+ *     description: Deletes existing schedules from today to Sunday and regenerates them based on user defaults.
+ *     tags: [Schedules]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Roster reset successfully
+ */
+router.post('/reset-roster', scheduleController.resetRosterInRange);
 
 module.exports = router;

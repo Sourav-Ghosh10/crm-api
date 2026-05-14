@@ -58,6 +58,10 @@ const attendanceSchema = new mongoose.Schema(
     breaks: [{
       startTime: Date,
       endTime: Date,
+      breakType: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'BreakType'
+      },
       duration: Number, // in minutes
       durationString: String // e.g., "1H 2M 2S"
     }],

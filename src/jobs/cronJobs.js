@@ -2,14 +2,14 @@ const cron = require('node-cron');
 const scheduleService = require('../services/scheduleService');
 
 const initCronJobs = () => {
-    // Schedule a task to run every day at midnight (00:00)
-    cron.schedule('0 0 * * *', async () => {
-        console.log('[Cron] Starting daily roster generation...');
+    // Weekly Roster Process (Every Sunday at 11:00 PM)
+    cron.schedule('0 23 * * 0', async () => {
+        console.log('[Cron] Starting weekly roster process (Generation + Cleanup)...');
         try {
-            await scheduleService.generateRostersForAllUsers();
-            console.log('[Cron] Daily roster generation completed successfully.');
+            await scheduleService.processWeeklyRoster();
+            console.log('[Cron] Weekly roster process completed successfully.');
         } catch (error) {
-            console.error('[Cron] Error during daily roster generation:', error);
+            console.error('[Cron] Error during weekly roster process:', error);
         }
     });
 

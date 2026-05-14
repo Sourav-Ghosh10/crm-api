@@ -3,7 +3,10 @@ const User = require('../models/User');
 const LeaveType = require('../models/LeaveType');
 const Holiday = require('../models/Holiday');
 const Schedule = require('../models/Schedule');
+const SystemSettings = require('../models/SystemSettings');
+const emailService = require('../services/emailService');
 const { AppError, BadRequestError, NotFoundError, ForbiddenError } = require('../utils/errors');
+const catchAsync = require('../utils/catchAsync');
 const { calculateDaysBetween } = require('../utils/dateUtils');
 const mongoose = require('mongoose');
 
@@ -67,7 +70,7 @@ const calculateLeaveDays = (start, end, halfDay, userSettings = {}) => {
 
 const leaveController = {
     // Calculate leave duration (days)
-    calculateLeaveDuration: async (req, res) => {
+    calculateLeaveDuration: catchAsync(async (req, res) => {
         const { startDate, endDate } = req.query;
         const halfDay = req.query.halfDay === 'true'; // Parse string "true" to boolean true
         const userId = req.user._id;
@@ -102,10 +105,10 @@ const leaveController = {
                 numberOfDays
             }
         });
-    },
+    }),
 
     // Create a new leave request
-    createLeaveRequest: async (req, res) => {
+    createLeaveRequest: catchAsync(async (req, res) => {
         const { leaveType, startDate, endDate, halfDay, halfDayType, reason, attachments } = req.body;
         const userId = req.user._id;
 
@@ -206,14 +209,38 @@ const leaveController = {
             status: 'pending',
         });
 
+        // --- Send Notifications ---
+        try {
+            // 1. Get Recipients (Reporting Manager + Higher Management)
+            const reportingChain = await user.getReportingChain();
+            // reportingChain[0] is current user, so we take the rest
+            const managers = reportingChain.slice(1);
+            const managerEmails = managers
+                .map(m => m.personalInfo?.email)
+                .filter(email => !!email);
+
+            // 2. Get Additional Configured Emails
+            const adminSetting = await SystemSettings.findOne({ key: 'leave_notification_emails' });
+            const additionalEmails = adminSetting?.value || [];
+            
+            const allRecipients = Array.from(new Set([...managerEmails, ...additionalEmails]));
+
+            if (allRecipients.length > 0) {
+                await emailService.sendLeaveApplicationEmail(user, leave, allRecipients);
+            }
+        } catch (emailError) {
+            console.error('Failed to send leave application emails:', emailError);
+            // Don't fail the request if email fails
+        }
+
         res.status(201).json({
             status: 'success',
             data: leave,
         });
-    },
+    }),
 
     // Get all leave requests (Admin/Manager)
-    getLeaveRequests: async (req, res) => {
+    getLeaveRequests: catchAsync(async (req, res) => {
         const { page = 1, limit = 20, status, userId, leaveType, search } = req.query;
         const query = {};
 
@@ -330,10 +357,10 @@ const leaveController = {
                 totalPages: Math.ceil(total / limit),
             },
         });
-    },
+    }),
 
     // Get current user's leave requests
-    getMyLeaveRequests: async (req, res) => {
+    getMyLeaveRequests: catchAsync(async (req, res) => {
         const { page = 1, limit = 20, status, leaveType, search } = req.query;
         const userId = req.user._id;
         const query = { employeeId: userId };
@@ -362,10 +389,10 @@ const leaveController = {
                 totalPages: Math.ceil(total / limit),
             },
         });
-    },
+    }),
 
     // Get Leave Balance
-    getLeaveBalance: async (req, res) => {
+    getLeaveBalance: catchAsync(async (req, res) => {
         // If Admin/Manager requests for another user, use params.userId
         // Else use req.user._id
         let targetUserId = req.user._id;
@@ -471,10 +498,10 @@ const leaveController = {
                 balances,
             },
         });
-    },
+    }),
 
     // Update Leave Status (Approve/Reject)
-    updateLeaveStatus: async (req, res) => {
+    updateLeaveStatus: catchAsync(async (req, res) => {
         const { id } = req.params;
         const { status, rejectionReason } = req.body;
         const approverId = req.user._id;
@@ -486,17 +513,18 @@ const leaveController = {
             throw new BadRequestError(`Leave request is already ${leave.status}`);
         }
 
-        // Permission Check: Only the reporting manager, Admin/HR, or user with canApproveLeave permission
+        // Permission Check: Reporting manager, Higher management, Admin/HR
         const requester = leave.employeeId;
-        const reportingManagerId = requester.employment?.reportingManager;
+        const reportingChain = await requester.getReportingChain(); // [user, manager, higher_manager...]
+        const managerIds = reportingChain.slice(1).map(m => m._id.toString());
+        
+        const isManagerInChain = managerIds.includes(approverId.toString());
         const currentApproverRole = (req.user.employment?.role || '').toLowerCase();
-
-        const isReportingManager = reportingManagerId && reportingManagerId.toString() === approverId.toString();
         const isAdmin = currentApproverRole === 'admin' || currentApproverRole === 'hr' || currentApproverRole === 'super admin' || req.user.isAdmin;
         const hasApprovePermission = req.user.permissions?.canApproveLeave === true;
 
-        if (!isReportingManager && !isAdmin && !hasApprovePermission) {
-            throw new ForbiddenError('You do not have permission to approve/reject this leave request. Only the direct reporting manager, an administrator, or authorized personnel can perform this action.');
+        if (!isManagerInChain && !isAdmin && !hasApprovePermission) {
+            throw new ForbiddenError('You do not have permission to approve/reject this leave request. Only the reporting manager, higher management, or an administrator can perform this action.');
         }
 
         const session = await mongoose.startSession();
@@ -537,6 +565,13 @@ const leaveController = {
                 data: leave,
             });
 
+            // --- Send Notification to Employee ---
+            try {
+                await emailService.sendLeaveStatusUpdateEmail(requester, leave, status, rejectionReason);
+            } catch (emailError) {
+                console.error('Failed to send leave status update email:', emailError);
+            }
+
         } catch (error) {
             if (session && typeof session.abortTransaction === 'function') {
                 await session.abortTransaction();
@@ -547,10 +582,10 @@ const leaveController = {
                 session.endSession();
             }
         }
-    },
+    }),
 
     // Cancel own leave request
-    cancelMyLeave: async (req, res) => {
+    cancelMyLeave: catchAsync(async (req, res) => {
         const { id } = req.params;
         const { cancelReason } = req.body || {};
         const userId = req.user._id;
@@ -582,10 +617,10 @@ const leaveController = {
             message: 'Leave request cancelled successfully',
             data: leave,
         });
-    },
+    }),
 
     // Get Leave Stats for Dashboard
-    getLeaveStats: async (req, res) => {
+    getLeaveStats: catchAsync(async (req, res) => {
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
 
@@ -605,10 +640,10 @@ const leaveController = {
                 totalRequests,
             },
         });
-    },
+    }),
 
     // Get my personal leave dashboard stats (for cards)
-    getMyLeaveDashboardStats: async (req, res) => {
+    getMyLeaveDashboardStats: catchAsync(async (req, res) => {
         const userId = req.user._id;
 
         const user = await User.findById(userId).select('leaveBalance employment.department');
@@ -701,10 +736,10 @@ const leaveController = {
                 perType
             }
         });
-    },
+    }),
 
     // Update User Leave Balance (Admin/HR)
-    updateUserLeaveBalance: async (req, res) => {
+    updateUserLeaveBalance: catchAsync(async (req, res) => {
         const { userId } = req.params;
         const { leaveBalance } = req.body;
 
@@ -754,7 +789,7 @@ const leaveController = {
             status: 'success',
             data: Object.fromEntries(user.leaveBalance),
         });
-    },
+    }),
 };
 
 module.exports = leaveController;

@@ -10,7 +10,7 @@ const activityService = {
         const endOfDay = moment.utc(selectedDate).endOf('day').toDate();
 
         const [attendance, leaves, reimbursements] = await Promise.all([
-            Attendance.findOne({ employeeId: userId, date: startOfDay }).lean(),
+            Attendance.findOne({ employeeId: userId, date: startOfDay }).populate('breaks.breakType').lean(),
             Leave.find({
                 employeeId: userId,
                 status: { $ne: 'cancelled' },
@@ -75,11 +75,12 @@ const activityService = {
             // Breaks
             if (attendance.breaks) {
                 attendance.breaks.forEach(brk => {
+                    const typeName = brk.breakType?.name || '';
                     if (brk.startTime) {
                         activities.push({
                             type: 'BREAK_START',
                             timestamp: brk.startTime,
-                            title: 'Break Started',
+                            title: typeName ? `Break Started (${typeName})` : 'Break Started',
                             description: ''
                         });
                     }
@@ -87,10 +88,11 @@ const activityService = {
                         activities.push({
                             type: 'BREAK_END',
                             timestamp: brk.endTime,
-                            title: 'Break Ended',
+                            title: typeName ? `Break Ended (${typeName})` : 'Break Ended',
                             description: '',
                             metadata: {
-                                duration: brk.durationString
+                                duration: brk.durationString,
+                                breakType: typeName
                             }
                         });
                     }

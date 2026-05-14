@@ -197,6 +197,55 @@ const scheduleController = {
             next(error);
         }
     },
+
+    syncSchedulesWithWorkingHours: async (req, res, next) => {
+        try {
+            const { userId } = req.body;
+            if (userId) {
+                await scheduleService.syncFutureSchedulesWithWorkingHours(userId);
+                res.status(200).json({
+                    success: true,
+                    message: `Schedules synced for user ${userId}`,
+                });
+            } else {
+                await scheduleService.syncAllUsersFutureSchedules();
+                res.status(200).json({
+                    success: true,
+                    message: 'Schedules synced for all active users',
+                });
+            }
+        } catch (error) {
+            next(error);
+        }
+    },
+    resetRosterInRange: async (req, res, next) => {
+        try {
+            const { userId } = req.body;
+            const result = await scheduleService.resetRosterInRange(userId);
+            
+            // Invalidate roster caches
+            const redisClient = getRedisClient();
+            if (redisClient && redisClient.isOpen) {
+                try {
+                    const pattern = userId ? `roster:${userId}:*` : 'roster:*';
+                    const keys = await redisClient.keys(pattern);
+                    if (keys.length > 0) await redisClient.del(keys);
+                } catch (err) {
+                    logger.error('Redis Invalidation Error:', err);
+                }
+            }
+
+            res.status(200).json({
+                success: true,
+                message: `Roster reset and regenerated successfully up to Sunday ${userId ? `for user ${userId}` : 'for all active users'}`,
+                data: result,
+            });
+        } catch (error) {
+            next(error);
+        }
+    },
+
 };
+
 
 module.exports = scheduleController;

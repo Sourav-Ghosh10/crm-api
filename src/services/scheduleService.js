@@ -608,6 +608,106 @@ const getScheduledUsersByDate = async ({ startDate, endDate, page = 1, limit = 1
 };
 
 
+/**
+ * Synchronize future schedules with user's working hours.
+ * 
+ * @param {string} userId 
+ */
+const syncFutureSchedulesWithWorkingHours = async (userId) => {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+
+    const workingHours = user.employment?.workingHours || {};
+    const weeklyOffs = workingHours.weeklyOff || [];
+    const today = moment().startOf('day').toDate();
+
+    // Find all schedules from today onwards
+    const futureSchedules = await Schedule.find({
+        employeeId: userId,
+        date: { $gte: today }
+    });
+
+    if (futureSchedules.length === 0) return;
+
+    const bulkOps = futureSchedules.map(schedule => {
+        const dayName = moment(schedule.date).format('dddd');
+        const isOff = weeklyOffs.includes(dayName);
+
+        let update = {};
+        if (isOff) {
+            update = {
+                shiftType: 'off',
+                startTime: [],
+                endTime: []
+            };
+        } else {
+            const startTime = workingHours.startTime || '09:00';
+            const endTime = workingHours.endTime || '18:00';
+            // Simple cross-day detection: if start time is later than end time, it's a night shift
+            const isNight = startTime.localeCompare(endTime) > 0;
+
+            update = {
+                shiftType: isNight ? 'night' : 'day',
+                startTime: [startTime],
+                endTime: [endTime]
+            };
+        }
+
+        return {
+            updateOne: {
+                filter: { _id: schedule._id },
+                update: { $set: update }
+            }
+        };
+    });
+
+    if (bulkOps.length > 0) {
+        await Schedule.bulkWrite(bulkOps);
+    }
+};
+
+/**
+ * Synchronize future schedules for all active users.
+ */
+const syncAllUsersFutureSchedules = async () => {
+    const users = await User.findActive();
+    for (const user of users) {
+        await syncFutureSchedulesWithWorkingHours(user._id);
+    }
+};
+
+
+/**
+ * Weekly roster process:
+ * 1. Delete schedules older than today.
+ * 2. Generate rosters for the next 7 days.
+ */
+const processWeeklyRoster = async () => {
+    const today = moment().startOf('day');
+    
+    // 1. Delete data older than today
+    const deleteResult = await Schedule.deleteMany({
+        date: { $lt: today.toDate() }
+    });
+    console.log(`[ScheduleService] Cleanup: Deleted ${deleteResult.deletedCount} schedules older than ${today.format('YYYY-MM-DD')}`);
+
+    // 2. Generate for next 7 days
+    const users = await User.findActive();
+    const startDate = moment(today);
+    const endDate = moment(today).add(7, 'days').endOf('day');
+    
+    console.log(`[ScheduleService] Generating rosters for ${users.length} users from ${startDate.format('YYYY-MM-DD')} to ${endDate.format('YYYY-MM-DD')}`);
+
+    for (const user of users) {
+        try {
+            await ensureRosterGenerated(user, startDate, endDate);
+        } catch (error) {
+            console.error(`Error generating roster for user ${user.employeeId}:`, error);
+        }
+    }
+};
+
+
 module.exports = {
     getEmployeeRoster,
     updateSchedule,
@@ -615,4 +715,97 @@ module.exports = {
     getAllEmployeesRosters,
     bulkUpdateSchedules,
     getScheduledUsersByDate,
+    syncFutureSchedulesWithWorkingHours,
+    syncAllUsersFutureSchedules,
+    processWeeklyRoster,
+    resetRosterInRange: async (userId) => {
+        const today = moment().startOf('day');
+        // Find next Sunday
+        const sunday = moment(today).day(7); // This gets the upcoming Sunday
+        
+        const query = { isActive: true };
+        if (userId) {
+            query._id = userId;
+        }
+
+        const users = await User.find(query);
+
+        if (userId && users.length === 0) {
+            throw new Error('User not found or inactive');
+        }
+
+        console.log(`[ScheduleService] Resetting roster for ${userId ? `user ${userId}` : 'all active users'} from ${today.format('YYYY-MM-DD')} to ${sunday.format('YYYY-MM-DD')}`);
+
+        for (const user of users) {
+
+            try {
+                // 1. Delete existing schedules in this range
+                await Schedule.deleteMany({
+                    employeeId: user._id,
+                    date: {
+                        $gte: today.toDate(),
+                        $lte: sunday.toDate()
+                    }
+                });
+
+                // 2. Generate new schedules based ONLY on user defaults (ignoring patterns)
+                const workingHours = user.employment?.workingHours || {};
+                const weeklyOffs = workingHours.weeklyOff || [];
+                const bulkOps = [];
+                const current = moment(today);
+
+                while (current.isSameOrBefore(sunday)) {
+                    const dateKey = current.format('YYYY-MM-DD');
+                    const dayName = current.format('dddd');
+                    const isOff = weeklyOffs.includes(dayName);
+
+                    if (isOff) {
+                        bulkOps.push({
+                            insertOne: {
+                                document: {
+                                    employeeId: user._id,
+                                    date: dateKey,
+                                    shiftType: 'off',
+                                    isRecurring: false,
+                                },
+                            },
+                        });
+                    } else {
+                        const startTime = workingHours.startTime || '09:00';
+                        const endTime = workingHours.endTime || '18:00';
+                        const isNight = startTime.localeCompare(endTime) > 0;
+
+                        bulkOps.push({
+                            insertOne: {
+                                document: {
+                                    employeeId: user._id,
+                                    date: dateKey,
+                                    shiftType: isNight ? 'night' : 'day',
+                                    startTime: [startTime],
+                                    endTime: [endTime],
+                                    location: user.employment?.location || 'Office',
+                                    department: user.employment?.department || 'General',
+                                    isRecurring: false,
+                                },
+                            },
+                        });
+                    }
+                    current.add(1, 'day');
+                }
+
+                if (bulkOps.length > 0) {
+                    await Schedule.bulkWrite(bulkOps);
+                }
+            } catch (error) {
+                console.error(`Error resetting roster for user ${user.employeeId}:`, error);
+            }
+        }
+
+        return {
+            startDate: today.format('YYYY-MM-DD'),
+            endDate: sunday.format('YYYY-MM-DD'),
+            usersProcessed: users.length
+        };
+    }
 };
+

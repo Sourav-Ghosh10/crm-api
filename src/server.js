@@ -3,7 +3,6 @@ const app = require('./app');
 const { connectDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const { configureAWS } = require('./config/aws');
-const { createEmailTransporter } = require('./config/email');
 const logger = require('./utils/logger');
 
 const PORT = process.env.PORT || 5000;
@@ -26,7 +25,16 @@ process.on('uncaughtException', (error) => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('Unhandled Rejection at:', {
+    promise,
+    reason: reason instanceof Error ? {
+      message: reason.message,
+      stack: reason.stack,
+      ...reason
+    } : reason
+  });
+  // In development, keep the process alive to see more logs if possible, 
+  // but nodemon will restart anyway if we exit.
   process.exit(1);
 });
 
@@ -41,9 +49,6 @@ const startServer = async () => {
 
     // Configure AWS
     configureAWS();
-
-    // Initialize email transporter
-    createEmailTransporter();
 
     // Initialize Cron Jobs
     const initCronJobs = require('./jobs/cronJobs');
