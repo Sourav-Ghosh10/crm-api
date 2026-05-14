@@ -38,7 +38,12 @@ const syncWithExternalTime = async () => {
                 }
             }
         } catch (error) {
-            logger.warn(`🕒 Failed to sync with ${source}: ${error.message}`);
+            const isConnReset = error.code === 'ECONNRESET' || error.message.includes('ECONNRESET');
+            if (isConnReset) {
+                logger.warn(`🕒 Connection reset while syncing with ${source}. This is common for WorldTimeAPI.`);
+            } else {
+                logger.warn(`🕒 Failed to sync with ${source}: ${error.message}`);
+            }
         }
     }
 

@@ -154,8 +154,4 @@ attendanceSchema.pre('save', function () {
 
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-console.log('--- MODEL LOAD: Attendance ---');
-console.log('Host:', mongoose.connection.host);
-console.log('DB:', mongoose.connection.name);
-
 module.exports = Attendance;

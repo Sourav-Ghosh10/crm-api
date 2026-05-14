@@ -10,7 +10,7 @@ const CONNECTION_OPTIONS = {
   maxPoolSize: 10,
 
   // Time in milliseconds to wait before retrying to select a suitable server.
-  serverSelectionTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 30000,
 
   // Time in milliseconds before a socket is considered idle and closed.
   socketTimeoutMS: 45000,
@@ -95,7 +95,7 @@ async function connectDatabase(enableReconnection = false) {
   } catch (error) {
     // Initial connection failed: Log error and exit the application cleanly
     logger.error(`🔥 Failed to connect to MongoDB at ${process.env.MONGODB_URI}.`);
-    logger.error('Details:', error.message);
+    logger.error('Details:', error);
 
     // Only exit if it's the *initial* connection that failed.
     // Reconnection logic handles subsequent failures without exiting.

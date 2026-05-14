@@ -13,7 +13,7 @@ let redisClientInstance = null;
  */
 const registerEventListeners = (client) => {
   client.on('error', (err) => {
-    logger.error('🚨 Redis client error:', err.message || err);
+    logger.error('🚨 Redis client error:', err);
     // Important: Log the error but do not exit the process.
     // The client attempts automatic reconnection by default.
   });
@@ -99,7 +99,7 @@ const connectRedis = async () => {
 
     return redisClientInstance;
   } catch (error) {
-    logger.error('🔥 Redis connection failed during setup:', error.message);
+    logger.error('🔥 Redis connection failed during setup:', error);
 
     // Ensure the global instance is null on failure
     redisClientInstance = null;
