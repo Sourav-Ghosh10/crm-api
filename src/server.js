@@ -1,4 +1,15 @@
 require('dotenv').config();
+
+// Polyfill for global crypto which is required by some versions of the MongoDB driver in certain Node.js environments
+if (!global.crypto) {
+  try {
+    global.crypto = require('node:crypto');
+  } catch (err) {
+    // Fallback if node: prefix is not supported
+    global.crypto = require('crypto');
+  }
+}
+
 const app = require('./app');
 const { connectDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');
