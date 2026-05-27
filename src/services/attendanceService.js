@@ -29,6 +29,7 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
 
     let totalGrossMs = 0;
     let totalBreakMs = 0;
+    let totalUnpaidBreakMs = 0;
 
     // 1. Enrich Breaks first
     if (record.breaks) {
@@ -39,6 +40,19 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
             b.durationMs = durationMs;
             b.durationString = formatDuration(durationMs);
             totalBreakMs += durationMs;
+
+            const isPaidBreak = b.breakType && typeof b.breakType === 'object' ? b.breakType.isPaid === true : false;
+            if (!isPaidBreak) {
+                totalUnpaidBreakMs += durationMs;
+            } else {
+                const maxDurationMins = b.breakType && typeof b.breakType === 'object' ? b.breakType.maxDuration : 0;
+                if (maxDurationMins > 0) {
+                    const maxDurationMs = maxDurationMins * 60000;
+                    if (durationMs > maxDurationMs) {
+                        totalUnpaidBreakMs += (durationMs - maxDurationMs);
+                    }
+                }
+            }
         });
     }
 
@@ -57,6 +71,7 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
 
         // Find breaks that started/occurred during this session
         let sessionBreakMs = 0;
+        let sessionUnpaidBreakMs = 0;
         let sessionBreakCount = 0;
         if (record.breaks) {
             record.breaks.forEach(brk => {
@@ -65,6 +80,19 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
                 if (brkStart >= checkInTime && (!checkOutTime || brkStart <= checkOutTime)) {
                     sessionBreakCount++;
                     sessionBreakMs += brk.durationMs || 0;
+
+                    const isPaidBreak = brk.breakType && typeof brk.breakType === 'object' ? brk.breakType.isPaid === true : false;
+                    if (!isPaidBreak) {
+                        sessionUnpaidBreakMs += brk.durationMs || 0;
+                    } else {
+                        const maxDurationMins = brk.breakType && typeof brk.breakType === 'object' ? brk.breakType.maxDuration : 0;
+                        if (maxDurationMins > 0) {
+                            const maxDurationMs = maxDurationMins * 60000;
+                            if (brk.durationMs > maxDurationMs) {
+                                sessionUnpaidBreakMs += (brk.durationMs - maxDurationMs);
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -79,13 +107,13 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
         session.breakMs = sessionBreakMs;
         session.breakDurationString = formatDuration(sessionBreakMs);
         session.breakCount = sessionBreakCount;
-        session.netMs = Math.max(0, durationMs - sessionBreakMs);
+        session.netMs = Math.max(0, durationMs - sessionUnpaidBreakMs);
         session.netDurationString = formatDuration(session.netMs);
 
         totalGrossMs += durationMs;
     });
 
-    const netMs = Math.max(0, totalGrossMs - totalBreakMs);
+    const netMs = Math.max(0, totalGrossMs - totalUnpaidBreakMs);
 
     // Calculate totalHours based on floored net minutes
     const flooredNetMins = Math.floor(netMs / 60000);
@@ -165,11 +193,24 @@ const attendanceService = {
             }
         }
 
+        let address = '';
+        if (payload.latitude && payload.longitude) {
+            try {
+                const { reverseGeocode } = require('../utils/geocoder');
+                address = await reverseGeocode(payload.latitude, payload.longitude);
+            } catch (err) {
+                logger.error('Failed to geocode clock-in location: ' + err.message);
+            }
+        }
+
         const sessionData = {
             checkIn: {
                 time: now,
                 ipAddress: payload.ipAddress,
                 deviceInfo: payload.deviceInfo,
+                latitude: payload.latitude,
+                longitude: payload.longitude,
+                address: address || undefined,
             },
             isLate
         };
@@ -188,6 +229,34 @@ const attendanceService = {
             // Optionally update remarks if it was just "No schedule assigned" before
             if (payload.remarks) attendance.remarks = payload.remarks;
             await attendance.save();
+        }
+
+        if (payload.latitude && payload.longitude) {
+            try {
+                const LocationHistory = require('../models/LocationHistory');
+                await LocationHistory.create({
+                    userId,
+                    latitude: payload.latitude,
+                    longitude: payload.longitude,
+                    address,
+                    ipAddress: payload.ipAddress,
+                    userAgent: payload.deviceInfo,
+                    type: 'clock_in',
+                    loginAt: now
+                });
+
+                const User = require('../models/User');
+                await User.findByIdAndUpdate(userId, {
+                    lastActiveLocation: {
+                        latitude: payload.latitude,
+                        longitude: payload.longitude,
+                        address,
+                        updatedAt: now
+                    }
+                });
+            } catch (err) {
+                logger.error('Failed to log clock-in location history: ' + err.message);
+            }
         }
 
         return attendance;
@@ -229,11 +298,24 @@ const attendanceService = {
             throw new BadRequestError('You are currently on break. Please resume work before clocking out.');
         }
 
+        let address = '';
+        if (payload.latitude && payload.longitude) {
+            try {
+                const { reverseGeocode } = require('../utils/geocoder');
+                address = await reverseGeocode(payload.latitude, payload.longitude);
+            } catch (err) {
+                logger.error('Failed to geocode clock-out location: ' + err.message);
+            }
+        }
+
         // Close last session
         lastSession.checkOut = {
             time: now,
             ipAddress: payload.ipAddress,
-            deviceInfo: payload.deviceInfo
+            deviceInfo: payload.deviceInfo,
+            latitude: payload.latitude,
+            longitude: payload.longitude,
+            address: address || undefined,
         };
 
         // Check for early leave based on schedule
@@ -261,6 +343,34 @@ const attendanceService = {
         attendance.markModified('sessions');
 
         await attendance.save(); // Hook calculates totalHours based on all sessions
+
+        if (payload.latitude && payload.longitude) {
+            try {
+                const LocationHistory = require('../models/LocationHistory');
+                await LocationHistory.create({
+                    userId,
+                    latitude: payload.latitude,
+                    longitude: payload.longitude,
+                    address,
+                    ipAddress: payload.ipAddress,
+                    userAgent: payload.deviceInfo,
+                    type: 'clock_out',
+                    loginAt: now
+                });
+
+                const User = require('../models/User');
+                await User.findByIdAndUpdate(userId, {
+                    lastActiveLocation: {
+                        latitude: payload.latitude,
+                        longitude: payload.longitude,
+                        address,
+                        updatedAt: now
+                    }
+                });
+            } catch (err) {
+                logger.error('Failed to log clock-out location history: ' + err.message);
+            }
+        }
         return attendance;
     },
 
@@ -321,7 +431,20 @@ const attendanceService = {
         const durationMins = durationMs / (1000 * 60);
 
         breakItem.duration = durationMins;
-        attendance.breakTime = (attendance.breakTime || 0) + durationMins;
+
+        const BreakType = require('../models/BreakType');
+        const breakTypeObj = await BreakType.findById(breakItem.breakType).lean();
+        const isPaid = breakTypeObj ? breakTypeObj.isPaid === true : false;
+
+        if (!isPaid) {
+            attendance.breakTime = (attendance.breakTime || 0) + durationMins;
+        } else {
+            const maxDurationMins = breakTypeObj ? breakTypeObj.maxDuration : 0;
+            if (maxDurationMins > 0 && durationMins > maxDurationMins) {
+                const excessMins = durationMins - maxDurationMins;
+                attendance.breakTime = (attendance.breakTime || 0) + excessMins;
+            }
+        }
 
         attendance.breaks.set(breakIndex, breakItem);
 
@@ -976,6 +1099,164 @@ const attendanceService = {
             onLeave: onLeaveCount,
             halfDay: presentRecords.filter(r => r.status === ATTENDANCE_STATUS.HALF_DAY).length
         };
+    },
+
+    getDailyTimeline: async (date, userId) => {
+        const user = await User.findById(userId)
+            .select('username personalInfo.firstName personalInfo.lastName personalInfo.email employment.department employment.designation employment.timezone isHolidayApplicable')
+            .lean();
+        if (!user) {
+            throw new NotFoundError('User not found');
+        }
+        if (user.personalInfo) {
+            user.fullName = `${user.personalInfo.firstName} ${user.personalInfo.lastName}`;
+        }
+
+        const timezone = user.employment?.timezone || 'Asia/Kolkata';
+        const startOfDay = moment.tz(date, timezone).startOf('day').toDate();
+        const endOfDay = moment.tz(date, timezone).endOf('day').toDate();
+
+        const targetDateStr = moment.tz(date, timezone).format('YYYY-MM-DD');
+        const targetDate = moment.utc(targetDateStr).toDate();
+
+        let attendance = await Attendance.findOne({
+            employeeId: userId,
+            date: targetDate,
+        })
+        .populate('breaks.breakType')
+        .lean();
+
+        if (attendance) {
+            attendance.employeeId = {
+                _id: user._id,
+                username: user.username,
+                personalInfo: user.personalInfo,
+                fullName: user.fullName,
+                employment: user.employment,
+                isHolidayApplicable: user.isHolidayApplicable
+            };
+            const holidays_ = await holidayService.getHolidaysInRange(startOfDay, endOfDay);
+            const holiday = holidays_[0];
+            if (holiday && (user.isHolidayApplicable !== false)) {
+                attendance.isHoliday = true;
+                attendance.holidayName = holiday.name;
+            } else {
+                attendance.isHoliday = false;
+            }
+            attendance = enrichAttendanceRecord(attendance, timezone);
+        }
+
+        const LocationHistory = require('../models/LocationHistory');
+        const locationRecords = await LocationHistory.find({
+            userId,
+            loginAt: {
+                $gte: startOfDay,
+                $lte: endOfDay
+            }
+        })
+        .sort({ loginAt: 1 })
+        .lean();
+
+        const timeline = [];
+
+        if (attendance) {
+            if (attendance.sessions) {
+                attendance.sessions.forEach((session, index) => {
+                    if (session.checkIn && session.checkIn.time) {
+                        timeline.push({
+                            type: 'clock_in',
+                            time: session.checkIn.time,
+                            latitude: session.checkIn.latitude,
+                            longitude: session.checkIn.longitude,
+                            address: session.checkIn.address,
+                            ipAddress: session.checkIn.ipAddress,
+                            deviceInfo: session.checkIn.deviceInfo,
+                            remarks: index === 0 ? attendance.remarks : undefined,
+                            sessionIndex: index
+                        });
+                    }
+                    if (session.checkOut && session.checkOut.time) {
+                        timeline.push({
+                            type: 'clock_out',
+                            time: session.checkOut.time,
+                            latitude: session.checkOut.latitude,
+                            longitude: session.checkOut.longitude,
+                            address: session.checkOut.address,
+                            ipAddress: session.checkOut.ipAddress,
+                            deviceInfo: session.checkOut.deviceInfo,
+                            durationString: session.durationString,
+                            sessionIndex: index
+                        });
+                    }
+                });
+            }
+
+            if (attendance.breaks) {
+                attendance.breaks.forEach((b, index) => {
+                    if (b.startTime) {
+                        timeline.push({
+                            type: 'break_start',
+                            time: b.startTime,
+                            breakType: b.breakType,
+                            breakIndex: index
+                        });
+                    }
+                    if (b.endTime) {
+                        timeline.push({
+                            type: 'break_end',
+                            time: b.endTime,
+                            breakType: b.breakType,
+                            durationString: b.durationString,
+                            breakIndex: index
+                        });
+                    }
+                });
+            }
+        }
+
+        if (locationRecords && locationRecords.length > 0) {
+            locationRecords.forEach(record => {
+                if (record.type === 'clock_in' || record.type === 'clock_out') {
+                    return;
+                }
+                timeline.push({
+                    type: 'location_update',
+                    originalType: record.type,
+                    time: record.loginAt,
+                    latitude: record.latitude,
+                    longitude: record.longitude,
+                    address: record.address,
+                    ipAddress: record.ipAddress,
+                    deviceInfo: record.userAgent
+                });
+            });
+        }
+
+        timeline.sort((a, b) => new Date(a.time) - new Date(b.time));
+
+        if (!attendance) {
+            attendance = {
+                date: targetDate,
+                employeeId: {
+                    _id: user._id,
+                    username: user.username,
+                    personalInfo: user.personalInfo,
+                    fullName: user.fullName,
+                    employment: user.employment,
+                    isHolidayApplicable: user.isHolidayApplicable
+                },
+                sessions: [],
+                breaks: [],
+                status: 'absent',
+                totalHours: 0,
+                totalBreakTime: 0,
+                timeline: timeline
+            };
+        } else {
+            attendance.timeline = timeline;
+        }
+
+        return attendance;
     }
 };
 

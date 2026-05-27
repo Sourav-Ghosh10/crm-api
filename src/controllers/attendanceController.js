@@ -3,13 +3,15 @@ const attendanceService = require('../services/attendanceService');
 const attendanceController = {
     clockIn: async (req, res, next) => {
         try {
-            const { deviceInfo, remarks } = req.body;
+            const { deviceInfo, remarks, latitude, longitude } = req.body;
             const ipAddress = req.ip || req.connection.remoteAddress;
 
             const payload = {
                 deviceInfo,
                 remarks,
-                ipAddress
+                ipAddress,
+                latitude,
+                longitude
             };
 
             const result = await attendanceService.clockIn(req.user.id, payload);
@@ -26,12 +28,14 @@ const attendanceController = {
 
     clockOut: async (req, res, next) => {
         try {
-            const { deviceInfo } = req.body;
+            const { deviceInfo, latitude, longitude } = req.body;
             const ipAddress = req.ip || req.connection.remoteAddress;
 
             const payload = {
                 deviceInfo,
-                ipAddress
+                ipAddress,
+                latitude,
+                longitude
             };
 
             const result = await attendanceService.clockOut(req.user.id, payload);
@@ -168,6 +172,19 @@ const attendanceController = {
             res.status(200).json({
                 success: true,
                 message: 'Attendance stats fetched successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
+    },
+    getDailyTimeline: async (req, res, next) => {
+        try {
+            const { date, userId } = req.params;
+            const result = await attendanceService.getDailyTimeline(date, userId);
+            res.status(200).json({
+                success: true,
+                message: 'Daily timeline fetched successfully',
                 data: result
             });
         } catch (error) {

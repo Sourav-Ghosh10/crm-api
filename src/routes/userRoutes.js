@@ -156,4 +156,6 @@ router.get('/:id', validate(idParamSchema, 'params'), userController.getUserById
 router.put('/:id', validate(idParamSchema, 'params'), validate(updateUserSchema), userController.updateUser);
 router.delete('/:id', validate(idParamSchema, 'params'), validate(statusToggleSchema, 'query'), userController.deleteUser);
 
+router.get('/:userId/location-history', require('../controllers/locationController').getLocationHistory);
+
 module.exports = router;

@@ -32,9 +32,17 @@ const correctLogoutSchema = Joi.object({
   remarks: Joi.string().allow('').max(500),
 });
 
+const dailyTimelineSchema = Joi.object({
+  date: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required().messages({
+    'string.pattern.base': 'Date must be in YYYY-MM-DD format'
+  }),
+  userId: objectIdSchema.required()
+});
+
 module.exports = {
   checkInSchema,
   checkOutSchema,
   attendanceQuerySchema,
   correctLogoutSchema,
+  dailyTimelineSchema,
 };

@@ -232,6 +232,8 @@ router.get('/summary/stats', attendanceController.getAttendanceStats);
  *       200:
  *         description: Attendance details
  */
+router.get('/:date/:userId', validate(require('../validators/attendanceValidator').dailyTimelineSchema, 'params'), attendanceController.getDailyTimeline);
+
 router.get('/:id', validate(require('../validators/userValidator').idParamSchema, 'params'), attendanceController.getAttendanceById);
 
 module.exports = router;

@@ -125,6 +125,12 @@ const userSchema = new mongoose.Schema(
       default: true,
     },
     lastLogin: Date,
+    lastActiveLocation: {
+      latitude: Number,
+      longitude: Number,
+      address: String,
+      updatedAt: Date,
+    },
     passwordChangedAt: Date,
     failedLoginAttempts: { type: Number, default: 0 },
     accountLockedUntil: Date,

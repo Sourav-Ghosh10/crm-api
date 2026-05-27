@@ -18,22 +18,34 @@ const attendanceSchema = new mongoose.Schema(
       time: Date,
       ipAddress: String,
       deviceInfo: String,
+      latitude: Number,
+      longitude: Number,
+      address: String,
     },
     checkOut: {
       time: Date,
       ipAddress: String,
       deviceInfo: String,
+      latitude: Number,
+      longitude: Number,
+      address: String,
     },
     sessions: [{
       checkIn: {
         time: Date,
         ipAddress: String,
         deviceInfo: String,
+        latitude: Number,
+        longitude: Number,
+        address: String,
       },
       checkOut: {
         time: Date,
         ipAddress: String,
         deviceInfo: String,
+        latitude: Number,
+        longitude: Number,
+        address: String,
       },
       duration: Number, // in hours
       durationString: String, // e.g., "1H 2M 2S"
@@ -150,6 +162,12 @@ attendanceSchema.pre('save', function () {
     });
   }
   this.totalBreakDurationString = formatDuration(breakMins * 60 * 1000);
+
+  // Sync top-level isLate and isEarlyLeave with sessions
+  if (this.sessions && this.sessions.length > 0) {
+    this.isLate = this.sessions.some(s => s.isLate);
+    this.isEarlyLeave = this.sessions.some(s => s.isEarlyLeave);
+  }
 });
 
 const Attendance = mongoose.model('Attendance', attendanceSchema);

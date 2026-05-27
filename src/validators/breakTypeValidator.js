@@ -6,6 +6,7 @@ const createBreakTypeSchema = Joi.object({
     code: Joi.string().trim().uppercase().required(),
     description: Joi.string().allow(''),
     maxDuration: Joi.number().min(0).default(0),
+    isPaid: Joi.boolean().default(false),
     isActive: Joi.boolean().default(true),
 });
 
@@ -14,6 +15,7 @@ const updateBreakTypeSchema = Joi.object({
     code: Joi.string().trim().uppercase(),
     description: Joi.string().allow(''),
     maxDuration: Joi.number().min(0),
+    isPaid: Joi.boolean(),
     isActive: Joi.boolean(),
 });
 
