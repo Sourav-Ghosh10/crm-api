@@ -66,6 +66,10 @@ const createUserSchema = Joi.object({
     dateOfJoining: Joi.date().iso(),
     employmentType: Joi.string().valid('full-time', 'part-time', 'contract', 'intern').default('full-time'),
     reportingManager: objectIdSchema.allow(null),
+    uanNumber: Joi.string().allow('', null).max(50),
+    esiNumber: Joi.string().allow('', null).max(50),
+    bankAccountNo: Joi.string().allow('', null).max(50),
+    bankName: Joi.string().allow('', null).max(100),
     location: Joi.string().max(100),
     timezone: Joi.string().max(100).default('Asia/Kolkata'),
     workingHours: Joi.object({
@@ -93,6 +97,8 @@ const createUserSchema = Joi.object({
   }),
   isAdmin: Joi.boolean().default(false),
   isHolidayApplicable: Joi.boolean(),
+  isPaidLeaveApplicable: Joi.boolean(),
+  totalLeaveBalance: Joi.number().min(0),
   permissions: Joi.object({
     modules: Joi.array().items(Joi.string()),
     canApproveLeave: Joi.boolean(),

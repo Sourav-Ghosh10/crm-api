@@ -57,6 +57,39 @@ const leaveBalanceService = {
             logger.error(`Error during ${frequency} leave balance reset:`, error);
             throw error;
         }
+    },
+    /**
+     * Allocates global leave quota to all active users based on frequency.
+     * @param {string} frequency - 'monthly' or 'yearly'
+     */
+    allocateGlobalQuota: async (frequency) => {
+        try {
+            logger.info(`Starting global ${frequency} leave quota allocation...`);
+            const SystemSettings = require('../models/SystemSettings');
+            
+            // Check if frequency matches configured setting
+            const freqSetting = await SystemSettings.findOne({ key: 'leave_reset_frequency' });
+            const configuredFrequency = freqSetting && freqSetting.value ? freqSetting.value : 'monthly';
+            
+            if (configuredFrequency !== frequency) {
+                logger.info(`Skipping allocation. Configured frequency is ${configuredFrequency}, but this job is ${frequency}.`);
+                return;
+            }
+
+            const setting = await SystemSettings.findOne({ key: 'monthly_leave_quota' });
+            const quota = setting && setting.value ? parseFloat(setting.value) : 1.5;
+
+            const users = await User.find({ isActive: true });
+            for (const user of users) {
+                user.totalLeaveBalance = (user.totalLeaveBalance || 0) + quota;
+                await user.save();
+            }
+
+            logger.info(`Successfully allocated ${quota} leaves to ${users.length} active users.`);
+        } catch (error) {
+            logger.error(`Error during global ${frequency} leave quota allocation:`, error);
+            throw error;
+        }
     }
 };
 

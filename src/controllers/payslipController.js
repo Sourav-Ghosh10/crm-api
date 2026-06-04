@@ -41,6 +41,18 @@ const payslipController = {
     }
   },
 
+  previewPayslip: async (req, res, next) => {
+    try {
+      const preview = await payslipService.previewPayslip(req.body);
+      res.status(200).json({
+        success: true,
+        data: preview,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   generatePayslip: async (req, res, next) => {
     try {
       const payslip = await payslipService.generatePayslip({

@@ -15,23 +15,23 @@ const initCronJobs = () => {
 
     // Monthly Leave Balance Reset (Midnight on the 1st of every month)
     cron.schedule('0 0 1 * *', async () => {
-        console.log('[Cron] Starting monthly leave balance reset...');
+        console.log('[Cron] Starting monthly leave balance allocation...');
         try {
             const leaveBalanceService = require('../services/leaveBalanceService');
-            await leaveBalanceService.resetBalances('monthly');
+            await leaveBalanceService.allocateGlobalQuota('monthly');
         } catch (error) {
-            console.error('[Cron] Error during monthly leave balance reset:', error);
+            console.error('[Cron] Error during monthly leave balance allocation:', error);
         }
     });
 
     // Yearly Leave Balance Reset (Midnight on January 1st)
     cron.schedule('0 0 1 1 *', async () => {
-        console.log('[Cron] Starting yearly leave balance reset...');
+        console.log('[Cron] Starting yearly leave balance allocation...');
         try {
             const leaveBalanceService = require('../services/leaveBalanceService');
-            await leaveBalanceService.resetBalances('yearly');
+            await leaveBalanceService.allocateGlobalQuota('yearly');
         } catch (error) {
-            console.error('[Cron] Error during yearly leave balance reset:', error);
+            console.error('[Cron] Error during yearly leave balance allocation:', error);
         }
     });
 

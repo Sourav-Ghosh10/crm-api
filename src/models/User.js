@@ -88,6 +88,22 @@ const userSchema = new mongoose.Schema(
         default: null,
         index: true,
       },
+      uanNumber: {
+        type: String,
+        trim: true,
+      },
+      esiNumber: {
+        type: String,
+        trim: true,
+      },
+      bankAccountNo: {
+        type: String,
+        trim: true,
+      },
+      bankName: {
+        type: String,
+        trim: true,
+      },
       location: String,
       timezone: {
         type: String,
@@ -112,6 +128,10 @@ const userSchema = new mongoose.Schema(
       of: Number,
       default: () => ({}),
     },
+    totalLeaveBalance: {
+      type: Number,
+      default: 0,
+    },
     isAdmin: {
       type: Boolean,
       default: false,
@@ -121,6 +141,10 @@ const userSchema = new mongoose.Schema(
       default: true,
     },
     isHolidayApplicable: {
+      type: Boolean,
+      default: true,
+    },
+    isPaidLeaveApplicable: {
       type: Boolean,
       default: true,
     },

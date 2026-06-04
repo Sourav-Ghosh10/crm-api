@@ -7,6 +7,199 @@ const { generatePayslipPDF } = require('../utils/pdfGenerator');
 const { NotFoundError, ConflictError } = require('../utils/errors');
 const logger = require('../utils/logger');
 
+const calculatePayslipComponents = (salaryConfig, totalDays, daysWorked, manualOverrides = {}, additionalEarnings = []) => {
+  const items = [];
+  let grossEarnings = 0;
+  let totalDeductions = 0;
+  let basicComponentValue = 0;
+
+  const baseAmount = Number(salaryConfig.monthlyCTC || salaryConfig.basicSalary || 0);
+  const safeTotalDays = Number(totalDays) || 30;
+  const safeDaysWorked = Number(daysWorked) || 0;
+
+  const adjustedCTC = (baseAmount / safeTotalDays) * safeDaysWorked;
+  
+  // First Pass: Calculate all components based on CTC or FIXED
+  const processedItems = [];
+  for (const item of salaryConfig.items) {
+    if (!item.isActive) continue;
+    const master = item.masterId;
+    if (!master || master.isBalancing) continue;
+
+    let amount = item.overrideValue !== null ? Number(item.overrideValue) : Number(master.value || 0);
+
+    if ((master.calculationType === 'PERCENTAGE' || master.calculationType === 'SLAB') && (master.percentageOf === 'BASIC' || master.percentageOf === 'GROSS')) {
+      processedItems.push(item);
+      continue;
+    }
+
+    if (master.calculationType === 'PERCENTAGE') {
+      amount = (baseAmount * amount) / 100;
+    }
+
+    let finalAmount = (amount / safeTotalDays) * safeDaysWorked;
+    let isManualOverride = false;
+    if (manualOverrides[master._id]) {
+      finalAmount = Number(manualOverrides[master._id]);
+      isManualOverride = true;
+    }
+
+    if (master.code === 'BASIC') {
+      basicComponentValue = amount; // Use raw monthly basic for other dependencies
+    }
+
+    items.push({
+      masterId: master._id,
+      name: master.name,
+      code: master.code,
+      type: master.type,
+      amount: Math.round(finalAmount * 100) / 100,
+      isManualOverride
+    });
+
+    if (master.type === 'ALLOWANCE') grossEarnings += finalAmount;
+    else totalDeductions += finalAmount;
+  }
+
+  // Second Pass: Calculate components based on BASIC
+  for (const item of processedItems) {
+    const master = item.masterId;
+    
+    // Only process PERCENTAGE of BASIC here.
+    // SLABs and PERCENTAGE of GROSS are handled in Pass 4.
+    if (!(master.calculationType === 'PERCENTAGE' && master.percentageOf === 'BASIC')) {
+      continue;
+    }
+
+    let amount = item.overrideValue !== null ? Number(item.overrideValue) : Number(master.value || 0);
+    amount = (basicComponentValue * amount) / 100;
+
+    let finalAmount = (amount / safeTotalDays) * safeDaysWorked;
+    let isManualOverride = false;
+    if (manualOverrides[master._id]) {
+      finalAmount = Number(manualOverrides[master._id]);
+      isManualOverride = true;
+    }
+
+    items.push({
+      masterId: master._id,
+      name: master.name,
+      code: master.code,
+      type: master.type,
+      amount: Math.round(finalAmount * 100) / 100,
+      isManualOverride
+    });
+
+    if (master.type === 'ALLOWANCE') grossEarnings += finalAmount;
+    else totalDeductions += finalAmount;
+  }
+
+  // Third Pass: Balancing Components (CTC Remainder)
+  for (const item of salaryConfig.items) {
+    if (!item.isActive) continue;
+    const master = item.masterId;
+    if (!master || !master.isBalancing) continue;
+
+    let balancingAmount = Math.max(0, adjustedCTC - grossEarnings);
+    let isManualOverride = false;
+    if (manualOverrides[master._id]) {
+      balancingAmount = Number(manualOverrides[master._id]);
+      isManualOverride = true;
+    }
+
+    items.push({
+      masterId: master._id,
+      name: master.name,
+      code: master.code,
+      type: master.type,
+      amount: Math.round(balancingAmount * 100) / 100,
+      isManualOverride
+    });
+
+    if (master.type === 'ALLOWANCE') grossEarnings += balancingAmount;
+    else totalDeductions += balancingAmount;
+  }
+
+  // Fourth Pass: Calculate components based on GROSS (finalized earnings)
+  for (const item of salaryConfig.items) {
+    if (!item.isActive) continue;
+    const master = item.masterId;
+    if (!master || master.isBalancing) continue;
+
+    if (master.calculationType === 'PERCENTAGE' && master.percentageOf === 'GROSS') {
+      let amount = (grossEarnings * master.value) / 100;
+      let isManualOverride = false;
+      if (manualOverrides[master._id]) {
+        amount = Number(manualOverrides[master._id]);
+        isManualOverride = true;
+      }
+      
+      items.push({
+        masterId: master._id,
+        name: master.name,
+        code: master.code,
+        type: master.type,
+        amount: Math.round(amount * 100) / 100,
+        isManualOverride
+      });
+
+      if (master.type === 'ALLOWANCE') grossEarnings += amount;
+      else totalDeductions += amount;
+    } 
+    else if (master.calculationType === 'SLAB') {
+      const baseForSlab = master.percentageOf === 'BASIC' ? basicComponentValue : 
+                         master.percentageOf === 'GROSS' ? grossEarnings : baseAmount;
+      
+      const slab = (master.slabs || []).find(s => 
+        baseForSlab >= s.minAmount && (!s.maxAmount || baseForSlab <= s.maxAmount)
+      );
+      
+      let amount = slab ? slab.fixedAmount : 0;
+      let isManualOverride = false;
+      if (manualOverrides[master._id]) {
+        amount = Number(manualOverrides[master._id]);
+        isManualOverride = true;
+      }
+
+      items.push({
+        masterId: master._id,
+        name: master.name,
+        code: master.code,
+        type: master.type,
+        amount: Math.round(amount * 100) / 100,
+        isManualOverride
+      });
+
+      if (master.type === 'ALLOWANCE') grossEarnings += amount;
+      else totalDeductions += amount;
+    }
+  }
+
+  // Fifth Pass: Additional Custom Earnings (like Stacks, Incentives)
+  for (const extra of additionalEarnings) {
+    if (!extra.name || !extra.amount) continue;
+    items.push({
+      masterId: null, // Allow null since it's not required in Mongoose if not explicitly specified as such
+      name: extra.name,
+      code: extra.code || 'CUSTOM',
+      type: 'ALLOWANCE',
+      amount: Math.round(Number(extra.amount) * 100) / 100,
+      isManualOverride: true
+    });
+    grossEarnings += Number(extra.amount);
+  }
+
+  const netPay = grossEarnings - totalDeductions;
+
+  return {
+    items,
+    grossEarnings: Math.round(grossEarnings * 100) / 100,
+    totalDeductions: Math.round(totalDeductions * 100) / 100,
+    netPay: Math.round(netPay * 100) / 100,
+    adjustedCTC: Math.round(adjustedCTC * 100) / 100
+  };
+};
+
 const payslipService = {
   getPayslips: async ({ page, limit, filters }) => {
     const query = {};
@@ -39,8 +232,24 @@ const payslipService = {
     return payslip;
   },
 
+  previewPayslip: async (data) => {
+    const { employeeId, month, year, daysWorked, totalDays, manualOverrides, additionalEarnings } = data;
+
+    const salaryConfig = await SalaryConfig.findOne({ 
+      employeeId, 
+      isActive: true,
+      effectiveFrom: { $lte: new Date(year, month - 1, totalDays || 30) }
+    }).populate('items.masterId');
+
+    if (!salaryConfig) {
+      throw new NotFoundError('No active salary configuration found for this employee');
+    }
+
+    return calculatePayslipComponents(salaryConfig, totalDays, daysWorked, manualOverrides, additionalEarnings);
+  },
+
   generatePayslip: async (data) => {
-    const { employeeId, month, year, daysWorked, totalDays, lopDays } = data;
+    const { employeeId, month, year, daysWorked, totalDays, lopDays, manualOverrides, additionalEarnings } = data;
 
     // Check if payslip already exists
     const existing = await Payslip.findOne({ employeeId, month, year });
@@ -59,151 +268,7 @@ const payslipService = {
       throw new NotFoundError('No active salary configuration found for this employee');
     }
 
-    const items = [];
-    let grossEarnings = 0;
-    let totalDeductions = 0;
-    let basicComponentValue = 0;
-
-    // Fallback for monthlyCTC (handling legacy records)
-    const baseAmount = Number(salaryConfig.monthlyCTC || salaryConfig.basicSalary || 0);
-    const safeTotalDays = Number(totalDays) || 30;
-    const safeDaysWorked = Number(daysWorked) || 0;
-
-    // Pro-rata Monthly CTC for reference
-    const adjustedCTC = (baseAmount / safeTotalDays) * safeDaysWorked;
-    
-    // First Pass: Calculate all components based on CTC or FIXED
-    const processedItems = [];
-    for (const item of salaryConfig.items) {
-      if (!item.isActive) continue;
-      const master = item.masterId;
-      if (!master || master.isBalancing) continue;
-
-      let amount = item.overrideValue !== null ? Number(item.overrideValue) : Number(master.value || 0);
-
-      // We only handle CTC based or fixed in first pass
-      if ((master.calculationType === 'PERCENTAGE' || master.calculationType === 'SLAB') && (master.percentageOf === 'BASIC' || master.percentageOf === 'GROSS')) {
-        processedItems.push(item); // Save for later passes
-        continue;
-      }
-
-      if (master.calculationType === 'PERCENTAGE') {
-        amount = (baseAmount * amount) / 100;
-      }
-
-      // Pro-rata adjustment
-      const finalAmount = (amount / safeTotalDays) * safeDaysWorked;
-
-      if (master.code === 'BASIC') {
-        basicComponentValue = amount; // Use raw monthly basic for other dependencies
-      }
-
-      items.push({
-        masterId: master._id,
-        name: master.name,
-        code: master.code,
-        type: master.type,
-        amount: Math.round(finalAmount * 100) / 100,
-        isManualOverride: false
-      });
-
-      if (master.type === 'ALLOWANCE') grossEarnings += finalAmount;
-      else totalDeductions += finalAmount;
-    }
-
-    // Second Pass: Calculate components based on BASIC
-    for (const item of processedItems) {
-      const master = item.masterId;
-      let amount = item.overrideValue !== null ? Number(item.overrideValue) : Number(master.value || 0);
-
-      if (master.calculationType === 'PERCENTAGE' && master.percentageOf === 'BASIC') {
-        amount = (basicComponentValue * amount) / 100;
-      }
-
-      const finalAmount = (amount / safeTotalDays) * safeDaysWorked;
-
-      items.push({
-        masterId: master._id,
-        name: master.name,
-        code: master.code,
-        type: master.type,
-        amount: Math.round(finalAmount * 100) / 100,
-        isManualOverride: false
-      });
-
-      if (master.type === 'ALLOWANCE') grossEarnings += finalAmount;
-      else totalDeductions += finalAmount;
-    }
-
-    // Third Pass: Balancing Components (CTC Remainder)
-    for (const item of salaryConfig.items) {
-      if (!item.isActive) continue;
-      const master = item.masterId;
-      if (!master || !master.isBalancing) continue;
-
-      // Balancing allowance = Adjusted CTC - Current Gross Earnings
-      const balancingAmount = Math.max(0, adjustedCTC - grossEarnings);
-
-      items.push({
-        masterId: master._id,
-        name: master.name,
-        code: master.code,
-        type: master.type,
-        amount: Math.round(balancingAmount * 100) / 100,
-        isManualOverride: false
-      });
-
-      if (master.type === 'ALLOWANCE') grossEarnings += balancingAmount;
-      else totalDeductions += balancingAmount;
-    }
-
-    // Fourth Pass: Calculate components based on GROSS (finalized earnings)
-    for (const item of salaryConfig.items) {
-      if (!item.isActive) continue;
-      const master = item.masterId;
-      if (!master || master.isBalancing) continue; // Balancing handled in Pass 3
-
-      if (master.calculationType === 'PERCENTAGE' && master.percentageOf === 'GROSS') {
-        const amount = (grossEarnings * master.value) / 100;
-        
-        items.push({
-          masterId: master._id,
-          name: master.name,
-          code: master.code,
-          type: master.type,
-          amount: Math.round(amount * 100) / 100,
-          isManualOverride: false
-        });
-
-        if (master.type === 'ALLOWANCE') grossEarnings += amount;
-        else totalDeductions += amount;
-      } 
-      else if (master.calculationType === 'SLAB') {
-        // Slab calculations are typically based on GROSS for things like PTax
-        const baseForSlab = master.percentageOf === 'BASIC' ? basicComponentValue : 
-                           master.percentageOf === 'GROSS' ? grossEarnings : baseAmount;
-        
-        const slab = (master.slabs || []).find(s => 
-          baseForSlab >= s.minAmount && (!s.maxAmount || baseForSlab <= s.maxAmount)
-        );
-        
-        const amount = slab ? slab.fixedAmount : 0;
-
-        items.push({
-          masterId: master._id,
-          name: master.name,
-          code: master.code,
-          type: master.type,
-          amount: Math.round(amount * 100) / 100,
-          isManualOverride: false
-        });
-
-        if (master.type === 'ALLOWANCE') grossEarnings += amount;
-        else totalDeductions += amount;
-      }
-    }
-
-    const netPay = grossEarnings - totalDeductions;
+    const { items, grossEarnings, totalDeductions, netPay, adjustedCTC } = calculatePayslipComponents(salaryConfig, totalDays, daysWorked, manualOverrides, additionalEarnings);
 
     const payslip = await Payslip.create({
       employeeId,
@@ -276,7 +341,9 @@ const payslipService = {
     }
 
     return true;
-  }
+  },
+
+  calculatePayslipComponents,
 };
 
 module.exports = payslipService;

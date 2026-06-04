@@ -169,31 +169,34 @@ const leaveController = {
             (leaveTypeInfo && leaveTypeInfo.isPaid === false) ||
             (leaveTypeInfo && leaveTypeInfo.code === 'LWP');
 
-        // Dynamic Balance Calculation (Allocated - Taken/Pending)
+        if (!isUnpaid && user.isPaidLeaveApplicable === false) {
+            throw new ForbiddenError(`You are not eligible for paid leaves. Please select Unpaid Leave (LWP).`);
+        }
+
+        // Dynamic Balance Calculation (Global Quota - Taken/Pending)
         let currentBalance = 0;
         if (isUnpaid) {
             currentBalance = Infinity;
-        } else if (leaveTypeInfo) {
-            const startOfYear = new Date(new Date().getFullYear(), 0, 1);
-            const endOfYear = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59, 999);
+        } else {
+            // Fetch all active paid leave types
+            const activeLeaveTypes = await LeaveType.find({ isActive: true, isPaid: true });
+            const paidLeaveTypeNames = activeLeaveTypes.map(lt => lt.name);
+            const paidLeaveTypeCodes = activeLeaveTypes.map(lt => lt.code);
 
-            // Fetch Approved + Pending leaves for THIS type for current year
+            // Fetch Approved + Pending leaves for ALL paid types (all time, since totalLeaveBalance is all-time)
             const leavesTaken = await Leave.find({
                 employeeId: userId,
-                leaveType: { $in: [leaveTypeInfo.name, leaveTypeInfo.code] },
-                status: { $in: ['approved', 'pending'] },
-                startDate: { $gte: startOfYear, $lte: endOfYear }
+                leaveType: { $in: [...paidLeaveTypeNames, ...paidLeaveTypeCodes] },
+                status: { $in: ['approved', 'pending'] }
             });
 
             const totalTaken = leavesTaken.reduce((sum, l) => sum + l.numberOfDays, 0);
-            currentBalance = Math.max(0, (leaveTypeInfo.defaultAmount || 0) - totalTaken);
+            currentBalance = Math.max(0, (user.totalLeaveBalance || 0) - totalTaken);
         }
-
-        // console.log(`Dynamic Balance for ${canonicalName}: ${currentBalance}`);
 
         // Policy logic
         if (!isUnpaid && currentBalance < numberOfDays) {
-            throw new BadRequestError(`Insufficient ${leaveType} leave balance. Available: ${currentBalance}, Requested: ${numberOfDays}`);
+            throw new BadRequestError(`Insufficient leave balance. Available: ${currentBalance}, Requested: ${numberOfDays}. Please select Unpaid Leave (LWP).`);
         }
 
         const leave = await Leave.create({
@@ -407,17 +410,23 @@ const leaveController = {
             }
         }
 
-        const user = await User.findById(targetUserId).select('leaveBalance personalInfo employment.department');
+        const user = await User.findById(targetUserId).select('leaveBalance totalLeaveBalance isPaidLeaveApplicable personalInfo employment.department');
         if (!user) throw new NotFoundError('User not found');
 
         // Fetch all active leave types applicable to this user's department
-        const activeLeaveTypes = await LeaveType.find({
+        const leaveQuery = {
             isActive: true,
             $or: [
                 { applicableDepartments: 'all' },
                 { applicableDepartments: user.employment?.department }
             ]
-        });
+        };
+
+        if (user.isPaidLeaveApplicable === false) {
+            leaveQuery.isPaid = false;
+        }
+
+        const activeLeaveTypes = await LeaveType.find(leaveQuery);
 
         // Filter for Current Year Only
         const startOfYear = new Date(new Date().getFullYear(), 0, 1);
@@ -449,32 +458,30 @@ const leaveController = {
         const balances = activeLeaveTypes.map(lt => {
             const canonicalName = lt.name;
             const used = usedMap[canonicalName] || 0;
-            let totalAllocated = lt.defaultAmount ?? "";
-
-            // For consistency: Available = Allocated - Used
-            // This ignores manual balance adjustments in favor of a clean "Annual Allowance" view
-            // If manual adjustment support is critically needed, we'd need a 'manualCorrection' field
-            let currentBalance = 0;
-            if (lt.isPaid && typeof totalAllocated === 'number') {
-                currentBalance = Math.max(0, totalAllocated - used);
-            } else {
-                currentBalance = ""; // Unpaid or unlimited
-                // If it's unpaid or unlimited, totalAllocated should also be blank string if not already
-                if (!lt.isPaid) {
-                    totalAllocated = "";
-                }
-            }
 
             return {
                 leaveTypeId: lt._id,
                 name: lt.name,
                 code: lt.code,
-                currentBalance: currentBalance,
+                currentBalance: "", // Replaced by global balance
                 used: used,
-                totalAllocated: totalAllocated,
+                totalAllocated: "", // Replaced by global balance
                 isPaid: lt.isPaid
             };
         });
+
+        // Calculate global available balance
+        const activePaidLeaveTypes = activeLeaveTypes.filter(lt => lt.isPaid);
+        const paidLeaveTypeNames = activePaidLeaveTypes.map(lt => lt.name);
+        const paidLeaveTypeCodes = activePaidLeaveTypes.map(lt => lt.code);
+
+        const allTimeLeavesTaken = await Leave.find({
+            employeeId: targetUserId,
+            leaveType: { $in: [...paidLeaveTypeNames, ...paidLeaveTypeCodes] },
+            status: { $in: ['approved', 'pending'] }
+        });
+        const totalUsedAllTime = allTimeLeavesTaken.reduce((sum, l) => sum + l.numberOfDays, 0);
+        const globalAvailableBalance = Math.max(0, (user.totalLeaveBalance || 0) - totalUsedAllTime);
 
         // Ensure 'unpaid' is handled if not explicitly in LeaveTypes
         // if (!balances.find(b => b.code.toUpperCase() === 'UNPAID')) {
@@ -496,6 +503,8 @@ const leaveController = {
                 name: user.fullName,
                 department: user.employment?.department,
                 balances,
+                globalAvailableBalance,
+                totalLeaveBalance: user.totalLeaveBalance || 0
             },
         });
     }),
@@ -646,17 +655,23 @@ const leaveController = {
     getMyLeaveDashboardStats: catchAsync(async (req, res) => {
         const userId = req.user._id;
 
-        const user = await User.findById(userId).select('leaveBalance employment.department');
+        const user = await User.findById(userId).select('leaveBalance totalLeaveBalance isPaidLeaveApplicable employment.department');
         if (!user) throw new NotFoundError('User not found');
 
         // Fetch all active leave types applicable to this user's department
-        const activeLeaveTypes = await LeaveType.find({
+        const leaveQuery = {
             isActive: true,
             $or: [
                 { applicableDepartments: 'all' },
                 { applicableDepartments: user.employment?.department }
             ]
-        });
+        };
+
+        if (user.isPaidLeaveApplicable === false) {
+            leaveQuery.isPaid = false;
+        }
+
+        const activeLeaveTypes = await LeaveType.find(leaveQuery);
 
         // Filter for Current Year Only
         const startOfYear = new Date(new Date().getFullYear(), 0, 1);
@@ -685,44 +700,46 @@ const leaveController = {
         });
 
         // 1. Available & Per Type Stats
-        let available = 0;
         let totalUsed = 0;
-        let totalAllocatedSum = 0;
 
         const perType = activeLeaveTypes.map(lt => {
             const canonicalName = lt.name;
             const used = usedMap[canonicalName] || 0;
-            const total = lt.defaultAmount;
 
-            // Calculate balance as Total - Used
-            let currentBal = 0;
-            if (lt.isPaid && typeof total === 'number') {
-                currentBal = Math.max(0, total - used);
-                available += currentBal;
+            if (lt.isPaid) {
                 totalUsed += used;
-                totalAllocatedSum += total;
-            } else {
-                currentBal = Infinity;
             }
 
             return {
                 name: lt.name,
                 code: lt.code,
-                balance: currentBal,
+                balance: "", // Handled globally now
                 used,
-                total: total,
+                total: "", // Handled globally now
                 isPaid: lt.isPaid
             };
         });
+
+        // Calculate global available balance based on all-time paid leaves
+        const activePaidLeaveTypes = activeLeaveTypes.filter(lt => lt.isPaid);
+        const paidLeaveTypeNames = activePaidLeaveTypes.map(lt => lt.name);
+        const paidLeaveTypeCodes = activePaidLeaveTypes.map(lt => lt.code);
+
+        const allTimeLeavesTaken = await Leave.find({
+            employeeId: userId,
+            leaveType: { $in: [...paidLeaveTypeNames, ...paidLeaveTypeCodes] },
+            status: { $in: ['approved', 'pending'] }
+        });
+        
+        const totalUsedAllTime = allTimeLeavesTaken.reduce((sum, l) => sum + l.numberOfDays, 0);
+        const totalAllocated = user.totalLeaveBalance || 0;
+        const available = Math.max(0, totalAllocated - totalUsedAllTime);
 
         // 3. Pending: Count of pending requests
         const pendingCount = await Leave.countDocuments({
             employeeId: userId,
             status: 'pending'
         });
-
-        // 4. Total Allocated: Sum of all defaultAmount values for paid leave types
-        const totalAllocated = totalAllocatedSum;
 
         res.json({
             status: 'success',
@@ -741,16 +758,21 @@ const leaveController = {
     // Update User Leave Balance (Admin/HR)
     updateUserLeaveBalance: catchAsync(async (req, res) => {
         const { userId } = req.params;
-        const { leaveBalance } = req.body;
+        const { leaveBalance, totalLeaveBalance } = req.body;
 
-        if (!leaveBalance || typeof leaveBalance !== 'object') {
-            throw new BadRequestError('leaveBalance object is required in body');
+        if (!leaveBalance && totalLeaveBalance === undefined) {
+            throw new BadRequestError('leaveBalance object or totalLeaveBalance is required in body');
         }
 
         const user = await User.findById(userId);
         if (!user) throw new NotFoundError('User not found');
 
-        // Fetch active leave types to build a resolution map (Raw Name-based)
+        if (totalLeaveBalance !== undefined) {
+            user.totalLeaveBalance = Number(totalLeaveBalance);
+        }
+
+        if (leaveBalance && typeof leaveBalance === 'object') {
+            // Fetch active leave types to build a resolution map (Raw Name-based)
         const activeLeaveTypes = await LeaveType.find({ isActive: true });
         const typeResolutionMap = {};
         activeLeaveTypes.forEach(lt => {
@@ -782,12 +804,13 @@ const leaveController = {
                 user.leaveBalance.set(canonicalName, item.value);
             }
         }
+        } // End of if (leaveBalance)
 
         await user.save();
 
         res.json({
             status: 'success',
-            data: Object.fromEntries(user.leaveBalance),
+            data: user.leaveBalance ? Object.fromEntries(user.leaveBalance) : {},
         });
     }),
 };

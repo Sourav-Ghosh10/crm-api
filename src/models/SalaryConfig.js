@@ -23,6 +23,10 @@ const salaryConfigSchema = new mongoose.Schema(
     effectiveFrom: { type: Date, required: true },
     isActive: { type: Boolean, default: true, index: true },
     items: [salaryConfigItemSchema],
+    uanNumber: { type: String, trim: true },
+    esiNumber: { type: String, trim: true },
+    bankAccountNo: { type: String, trim: true },
+    bankName: { type: String, trim: true },
   },
   { timestamps: true }
 );

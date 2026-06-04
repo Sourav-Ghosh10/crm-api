@@ -85,6 +85,7 @@ router.use(authenticate);
  */
 router.get('/', salaryConfigController.getConfigs);
 router.post('/', validate(createSalaryConfigSchema), salaryConfigController.createConfig);
+router.post('/preview', salaryConfigController.previewConfig);
 
 /**
  * @swagger

@@ -7,6 +7,9 @@ const salaryConfigService = {
     const query = {};
     if (filters.isActive !== undefined) query.isActive = filters.isActive;
     if (filters.employeeId) query.employeeId = filters.employeeId;
+    if (filters.employeeIds && filters.employeeIds.length > 0) {
+      query.employeeId = { $in: filters.employeeIds };
+    }
 
     const [configs, total] = await Promise.all([
       SalaryConfig.find(query)
@@ -39,6 +42,32 @@ const salaryConfigService = {
       .sort({ effectiveFrom: -1 })
       .lean();
     return config;
+  },
+
+  previewConfig: async (data) => {
+    const { monthlyCTC, items } = data;
+    const AllowanceDeductionMaster = require('../models/AllowanceDeductionMaster');
+    const { calculatePayslipComponents } = require('./payslipService');
+    
+    // Fetch all referenced masters
+    const masterIds = (items || []).map(i => i.masterId);
+    const masters = await AllowanceDeductionMaster.find({ _id: { $in: masterIds } }).lean();
+    
+    const masterMap = {};
+    masters.forEach(m => { masterMap[m._id.toString()] = m; });
+
+    // Assemble a temporary salary config object
+    const tempConfig = {
+      monthlyCTC: monthlyCTC || 0,
+      items: (items || []).map(i => ({
+        masterId: masterMap[i.masterId.toString()],
+        overrideValue: i.overrideValue,
+        isActive: i.isActive
+      })).filter(i => i.masterId) // filter out if master not found
+    };
+
+    // calculatePayslipComponents(salaryConfig, totalDays, daysWorked, manualOverrides)
+    return calculatePayslipComponents(tempConfig, 30, 30, {});
   },
 
   createConfig: async (data) => {

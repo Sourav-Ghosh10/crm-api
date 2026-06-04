@@ -61,6 +61,32 @@ router.get('/', payslipController.getPayslips);
 
 /**
  * @swagger
+ * /api/payroll/payslips/preview:
+ *   post:
+ *     summary: Preview a payslip calculation
+ *     tags: [Payslips]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - employeeId
+ *               - month
+ *               - year
+ *               - totalDays
+ *               - daysWorked
+ *     responses:
+ *       200:
+ *         description: Payslip preview calculated
+ */
+router.post('/preview', validate(generatePayslipSchema), payslipController.previewPayslip);
+
+/**
+ * @swagger
  * /api/payroll/payslips/generate:
  *   post:
  *     summary: Generate a new payslip

@@ -8,6 +8,7 @@ const salaryConfigController = {
       const filters = {
         isActive: req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined,
         employeeId: req.query.employeeId,
+        employeeIds: req.query.employeeIds ? req.query.employeeIds.split(',') : undefined,
       };
 
       const result = await salaryConfigService.getConfigs({ page, limit, filters });
@@ -45,6 +46,18 @@ const salaryConfigController = {
       res.status(200).json({
         success: true,
         data: config,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  previewConfig: async (req, res, next) => {
+    try {
+      const preview = await salaryConfigService.previewConfig(req.body);
+      res.status(200).json({
+        success: true,
+        data: preview,
       });
     } catch (error) {
       next(error);

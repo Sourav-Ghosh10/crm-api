@@ -69,7 +69,16 @@ const payrollValidator = {
     year: Joi.number().integer().required(),
     totalDays: Joi.number().min(1).max(31).required(),
     daysWorked: Joi.number().min(0).max(31).required(),
-    lopDays: Joi.number().min(0).default(0),
+    lopDays: Joi.number().integer().min(0).default(0),
+    manualOverrides: Joi.object().pattern(
+      /^[0-9a-fA-F]{24}$/,
+      Joi.number().min(0)
+    ).optional().default({}),
+    additionalEarnings: Joi.array().items(Joi.object({
+      name: Joi.string().required(),
+      amount: Joi.number().min(0).required(),
+      code: Joi.string().optional()
+    })).optional().default([]),
   }),
 
   updatePayslipStatusSchema: Joi.object({

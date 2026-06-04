@@ -145,8 +145,10 @@ const userService = {
       'isAdmin',
       'isActive',
       'isHolidayApplicable',
+      'isPaidLeaveApplicable',
       'allowedIPs',
       'leaveBalance',
+      'totalLeaveBalance',
       'lastLogin',
     ];
 

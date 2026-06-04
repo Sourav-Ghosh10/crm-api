@@ -78,6 +78,11 @@ const leaveTypeController = {
             ];
         }
 
+        // Filter out paid leaves if the user is not eligible for paid leave
+        if (req.user && req.user.isPaidLeaveApplicable === false) {
+            query.isPaid = false;
+        }
+
         // Fetch ALL matching leave types first (to handle dynamic filtering/injection correctly)
         // We'll apply pagination in memory after processing
         let leaveTypes = await LeaveType.find(query).sort({ createdAt: -1 });
@@ -92,8 +97,8 @@ const leaveTypeController = {
                 applicableDesignations: { $in: ['all', userDesignation || ''] }
             }).select('name code defaultAmount');
 
-            // Total Allocated
-            const totalAllocated = applicablePaidTypes.reduce((sum, lt) => sum + (lt.defaultAmount || 0), 0);
+            // Total Allocated (Global Shared Balance)
+            const totalAllocated = req.user.totalLeaveBalance || 0;
 
             // Total Taken/Pending (from Leave table)
             const typeNames = applicablePaidTypes.map(lt => lt.name);
@@ -111,35 +116,30 @@ const leaveTypeController = {
 
             // console.log('Total Allocated:', totalAllocated, 'Total Taken/Pending:', totalTaken, 'Remaining:', totalPaidBalance);
 
-            // Logic:
-            // If Balance > 0 -> Hide Unpaid Leave
-            // If Balance == 0 -> Ensure Unpaid Leave is visible (Inject if needed)
-
-            const unpaidPattern = /unpaid|lwp|loss of pay/i;
+            // Check if Unpaid Leave is already in the list
             const isUnpaid = (lt) => lt.isPaid === false || (lt.code && ['LWP', 'UNPAID'].includes(lt.code.toUpperCase()));
-            // console.log('Total Paid Balance:', totalPaidBalance);
-            if (totalPaidBalance > 0) {
-                // Hide Unpaid Leave
-                leaveTypes = leaveTypes.filter(lt => !isUnpaid(lt));
-            } else {
-                // Balance is 0 (or less), User needs Unpaid Leave
-                // Check if Unpaid Leave is already in the list
-                const hasUnpaid = leaveTypes.some(lt => isUnpaid(lt));
+            const hasUnpaid = leaveTypes.some(lt => isUnpaid(lt));
 
-                if (!hasUnpaid) {
-                    // Fetch Unpaid Leave from DB
-                    const unpaidLeaveType = await LeaveType.findOne({ code: 'LWP', isActive: true });
-                    if (unpaidLeaveType) {
-                        leaveTypes.push(unpaidLeaveType);
-                    }
-                }
-            }
-
-            // Special Case: If list is empty after strict filtering
-            if (leaveTypes.length === 0) {
-                const unpaidLeaveType = await LeaveType.findOne({ code: 'LWP', isActive: true });
+            if (!hasUnpaid) {
+                // Fetch Unpaid Leave from DB
+                const unpaidLeaveType = await LeaveType.findOne({ 
+                    isActive: true,
+                    $or: [
+                        { isPaid: false },
+                        { code: { $in: ['LWP', 'UNPAID', 'lwp', 'unpaid'] } }
+                    ]
+                });
                 if (unpaidLeaveType) {
                     leaveTypes.push(unpaidLeaveType);
+                } else {
+                    // Inject a virtual Unpaid Leave type if it doesn't exist in DB
+                    leaveTypes.push({
+                        _id: 'virtual_unpaid_leave',
+                        name: 'Unpaid Leave',
+                        code: 'UNPAID',
+                        isPaid: false,
+                        isActive: true
+                    });
                 }
             }
         }
@@ -224,6 +224,7 @@ const leaveTypeController = {
 
         const leaveBalanceService = require('../services/leaveBalanceService');
         await leaveBalanceService.resetBalances(frequency);
+        await leaveBalanceService.allocateGlobalQuota(frequency);
 
         res.json({
             status: 'success',
