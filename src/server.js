@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 require('dotenv').config();
 
 // Polyfill for global crypto which is required by some versions of the MongoDB driver in certain Node.js environments
