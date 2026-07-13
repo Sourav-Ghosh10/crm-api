@@ -8,6 +8,7 @@ const {
     idParamSchema,
     userQuerySchema,
     statusToggleSchema,
+    changePasswordSchema,
 } = require('../validators/userValidator');
 
 const router = express.Router();
@@ -154,6 +155,7 @@ router.get('/', validate(userQuerySchema, 'query'), userController.getUsers);
  */
 router.get('/:id', validate(idParamSchema, 'params'), userController.getUserById);
 router.put('/:id', validate(idParamSchema, 'params'), validate(updateUserSchema), userController.updateUser);
+router.put('/:id/change-password', validate(idParamSchema, 'params'), validate(changePasswordSchema), userController.changePassword);
 router.delete('/:id', validate(idParamSchema, 'params'), validate(statusToggleSchema, 'query'), userController.deleteUser);
 
 router.get('/:userId/location-history', require('../controllers/locationController').getLocationHistory);

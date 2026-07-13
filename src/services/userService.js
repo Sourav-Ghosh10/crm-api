@@ -181,6 +181,16 @@ const userService = {
     return user;
   },
 
+  changePassword: async (id, newPassword) => {
+    const user = await User.findById(id).select('+passwordHash');
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+    user.passwordHash = newPassword;
+    await user.save();
+    logger.info(`Password changed for user: ${user.employeeId}`);
+    return user;
+  },
 
   deactivateUser: async (data) => {
     console.log(data);

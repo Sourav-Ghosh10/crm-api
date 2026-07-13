@@ -90,6 +90,20 @@ const userController = {
       next(error);
     }
   },
+
+  changePassword: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { password } = req.body;
+      await userService.changePassword(id, password);
+      res.status(200).json({
+        success: true,
+        message: 'Password changed successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 module.exports = userController;

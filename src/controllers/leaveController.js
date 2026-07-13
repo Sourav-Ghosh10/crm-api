@@ -173,6 +173,20 @@ const leaveController = {
             throw new ForbiddenError(`You are not eligible for paid leaves. Please select Unpaid Leave (LWP).`);
         }
 
+        // Check past date restriction based on leave type settings
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (startDate < todayStr) {
+            if (leaveTypeInfo && leaveTypeInfo.allowPastDates === false) {
+                throw new BadRequestError(`Leave requests for past dates are not permitted under ${canonicalName}.`);
+            }
+            if (!leaveTypeInfo && leaveType.toLowerCase() === 'unpaid') {
+                const unpaidDb = await LeaveType.findOne({ code: { $in: ['LWP', 'UNPAID', 'lwp', 'unpaid'] } });
+                if (unpaidDb && unpaidDb.allowPastDates === false) {
+                    throw new BadRequestError(`Leave requests for past dates are not permitted under Unpaid Leave.`);
+                }
+            }
+        }
+
         // Dynamic Balance Calculation (Global Quota - Taken/Pending)
         let currentBalance = 0;
         if (isUnpaid) {

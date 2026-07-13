@@ -41,7 +41,7 @@ const leaveTypeController = {
         }
 
         const leaveTypes = await LeaveType.find(query)
-            .select('name code isPaid description defaultAmount maxCarryForward resetFrequency applicableDepartments applicableDesignations isActive')
+            .select('name code isPaid description defaultAmount maxCarryForward resetFrequency applicableDepartments applicableDesignations isActive allowPastDates')
             .sort({ name: 1 });
 
         res.json({
@@ -138,7 +138,8 @@ const leaveTypeController = {
                         name: 'Unpaid Leave',
                         code: 'UNPAID',
                         isPaid: false,
-                        isActive: true
+                        isActive: true,
+                        allowPastDates: true
                     });
                 }
             }

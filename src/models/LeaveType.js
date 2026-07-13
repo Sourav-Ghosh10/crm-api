@@ -47,6 +47,10 @@ const leaveTypeSchema = new mongoose.Schema(
             type: Boolean,
             default: true,
         },
+        allowPastDates: {
+            type: Boolean,
+            default: true,
+        },
     },
     {
         timestamps: true,

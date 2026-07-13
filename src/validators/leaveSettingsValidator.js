@@ -13,6 +13,7 @@ const createLeaveTypeSchema = Joi.object({
     applicableDepartments: Joi.array().items(Joi.string()).default(['all']),
     applicableDesignations: Joi.array().items(Joi.string()).default(['all']),
     isActive: Joi.boolean().default(true),
+    allowPastDates: Joi.boolean().default(true),
 });
 
 const updateLeaveTypeSchema = Joi.object({
@@ -26,6 +27,7 @@ const updateLeaveTypeSchema = Joi.object({
     applicableDepartments: Joi.array().items(Joi.string()),
     applicableDesignations: Joi.array().items(Joi.string()),
     isActive: Joi.boolean(),
+    allowPastDates: Joi.boolean(),
 });
 
 const leaveTypeQuerySchema = paginationSchema.keys({
