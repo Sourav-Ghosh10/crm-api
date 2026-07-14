@@ -2,15 +2,34 @@ const axios = require('axios');
 const logger = require('./logger');
 
 let syncPoint = {
-    realTime: Date.now(),
-    localUptime: process.uptime(),
+    offsetMs: 0,
     isSynced: false
 };
 
 const syncWithExternalTime = async () => {
+    // Try HTTP Date headers from atomic edge servers (Google/Cloudflare) first as they never rate limit or drift
+    const headerSources = ['https://www.google.com', 'https://www.cloudflare.com'];
+    for (const source of headerSources) {
+        try {
+            const response = await axios.head(source, { timeout: 4000 });
+            if (response.headers && response.headers.date) {
+                const timestamp = new Date(response.headers.date).getTime();
+                if (timestamp && !isNaN(timestamp)) {
+                    syncPoint = {
+                        offsetMs: timestamp - Date.now(),
+                        isSynced: true
+                    };
+                    logger.info(`🕒 Server time synchronized with ${source} header (Offset: ${syncPoint.offsetMs}ms)`);
+                    return;
+                }
+            }
+        } catch (error) {
+            logger.warn(`🕒 Failed header sync with ${source}: ${error.message}`);
+        }
+    }
+
     const backupSources = [
         'https://worldtimeapi.org/api/timezone/Etc/UTC',
-        'https://timeapi.io/api/Time/current/zone?timeZone=UTC',
         'https://worldtimeapi.org/api/ip'
     ];
 
@@ -27,13 +46,12 @@ const syncWithExternalTime = async () => {
                 }
                 const timestamp = new Date(dateStr).getTime();
 
-                if (timestamp) {
+                if (timestamp && !isNaN(timestamp)) {
                     syncPoint = {
-                        realTime: timestamp,
-                        localUptime: process.uptime(),
+                        offsetMs: timestamp - Date.now(),
                         isSynced: true
                     };
-                    logger.info(`🕒 Server time synchronized with ${source}`);
+                    logger.info(`🕒 Server time synchronized with ${source} (Offset: ${syncPoint.offsetMs}ms)`);
                     return;
                 }
             }
@@ -47,9 +65,8 @@ const syncWithExternalTime = async () => {
         }
     }
 
-    // if all fail, use system time but mark as not synced
-    syncPoint.realTime = Date.now();
-    syncPoint.localUptime = process.uptime();
+    // if all fail, use system clock with 0 offset
+    syncPoint.offsetMs = 0;
     syncPoint.isSynced = false;
     logger.error('🕒 All time synchronization sources failed. Using system clock.');
 };
@@ -61,8 +78,7 @@ syncWithExternalTime();
 setInterval(syncWithExternalTime, 3600000);
 
 const getRealTime = () => {
-    const elapsedSeconds = process.uptime() - syncPoint.localUptime;
-    return new Date(syncPoint.realTime + elapsedSeconds * 1000);
+    return new Date(Date.now() + syncPoint.offsetMs);
 };
 
 module.exports = { getRealTime };
