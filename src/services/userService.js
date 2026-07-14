@@ -187,7 +187,7 @@ const userService = {
       throw new NotFoundError('User not found');
     }
     user.passwordHash = newPassword;
-    await user.save();
+    await user.save({ validateBeforeSave: false });
     logger.info(`Password changed for user: ${user.employeeId}`);
     return user;
   },

@@ -599,6 +599,167 @@ const attendanceService = {
         };
     },
 
+    getMyMonthSummary: async (userId, year, month) => {
+        const now = getRealTime();
+        const userBasic = await User.findById(userId).select('employment.timezone isHolidayApplicable').lean();
+        const timezone = userBasic?.employment?.timezone || 'Asia/Kolkata';
+
+        const targetYear = year ? Number(year) : moment(now).tz(timezone).year();
+        const targetMonth = month ? Number(month) : moment(now).tz(timezone).month() + 1; // 1-12
+
+        const monthStartMoment = moment.tz(`${targetYear}-${String(targetMonth).padStart(2, '0')}-01`, 'YYYY-MM-DD', timezone).startOf('day');
+        const daysInMonth = monthStartMoment.daysInMonth();
+        const monthEndMoment = moment(monthStartMoment).endOf('month');
+
+        const monthStart = monthStartMoment.toDate();
+        const monthEnd = monthEndMoment.toDate();
+
+        const [attendanceList, holidays, schedules, leaves] = await Promise.all([
+            Attendance.find({
+                employeeId: userId,
+                date: { $gte: monthStart, $lte: monthEnd }
+            }).populate('breaks.breakType').lean(),
+            holidayService.getHolidaysInRange(monthStart, monthEnd),
+            Schedule.find({
+                employeeId: userId,
+                date: { $gte: monthStart, $lte: monthEnd }
+            }).lean(),
+            Leave.find({
+                employeeId: userId,
+                status: 'approved',
+                $or: [
+                    { startDate: { $lte: monthEnd }, endDate: { $gte: monthStart } }
+                ]
+            }).lean()
+        ]);
+
+        const isHolidayApplicable = userBasic ? userBasic.isHolidayApplicable : true;
+        const holidayMap = {};
+        if (isHolidayApplicable && holidays) {
+            holidays.forEach(h => {
+                const dateStr = moment(h.date).tz(timezone).format('YYYY-MM-DD');
+                holidayMap[dateStr] = h.name || 'Holiday';
+            });
+        }
+
+        const scheduleMap = {};
+        schedules.forEach(s => {
+            const dateStr = moment(s.date).tz(timezone).format('YYYY-MM-DD');
+            scheduleMap[dateStr] = s.shiftType;
+        });
+
+        const attendanceMap = {};
+        attendanceList.forEach(r => {
+            const dateStr = moment(r.date).tz(timezone).format('YYYY-MM-DD');
+            const enriched = enrichAttendanceRecord(r, timezone);
+            attendanceMap[dateStr] = enriched;
+        });
+
+        const leaveDates = {};
+        leaves.forEach(l => {
+            let curr = moment(l.startDate).tz(timezone).startOf('day');
+            const end = moment(l.endDate).tz(timezone).startOf('day');
+            while (curr.isSameOrBefore(end)) {
+                leaveDates[curr.format('YYYY-MM-DD')] = l.leaveType || 'Approved Leave';
+                curr.add(1, 'day');
+            }
+        });
+
+        const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
+        const days = [];
+        let presentCount = 0;
+        let absentCount = 0;
+        let leaveCount = 0;
+        let holidayCount = 0;
+        let offDayCount = 0;
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const dayMoment = moment.tz(dateStr, 'YYYY-MM-DD', timezone);
+            const dayOfWeek = dayMoment.day(); // 0 Sun, 6 Sat
+            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+            const isToday = dateStr === todayStr;
+            const isPast = dateStr < todayStr;
+
+            let status = 'upcoming';
+            let label = '—';
+
+            if (leaveDates[dateStr]) {
+                status = 'leave';
+                label = leaveDates[dateStr] === 'casual' ? 'Casual Leave' :
+                        leaveDates[dateStr] === 'sick' ? 'Sick Leave' : 'On Leave';
+                leaveCount++;
+            } else if (holidayMap[dateStr]) {
+                status = 'holiday';
+                label = holidayMap[dateStr];
+                holidayCount++;
+            } else if (attendanceMap[dateStr]) {
+                const rec = attendanceMap[dateStr];
+                if (rec.status === 'absent' || (!rec.totalHours && !rec.sessions?.length)) {
+                    status = 'absent';
+                    label = 'Absent';
+                    absentCount++;
+                } else {
+                    status = isToday ? 'today' : 'present';
+                    label = rec.totalDurationString || (rec.totalHours ? `${Number(rec.totalHours).toFixed(1)}h` : 'Present');
+                    if (rec.totalHours || rec.sessions?.length) {
+                        presentCount++;
+                    }
+                }
+            } else if (isToday) {
+                if (scheduleMap[dateStr] === 'off' || (!scheduleMap[dateStr] && isWeekend)) {
+                    status = 'off_day';
+                    label = 'Off Day';
+                    offDayCount++;
+                } else {
+                    status = 'today';
+                    label = 'Not Clocked In';
+                }
+            } else if (isPast) {
+                if (scheduleMap[dateStr] === 'off' || (!scheduleMap[dateStr] && isWeekend)) {
+                    status = 'off_day';
+                    label = 'Off Day';
+                    offDayCount++;
+                } else {
+                    status = 'absent';
+                    label = 'Absent';
+                    absentCount++;
+                }
+            } else {
+                if (scheduleMap[dateStr] === 'off' || (!scheduleMap[dateStr] && isWeekend)) {
+                    status = 'off_day';
+                    label = 'Off Day';
+                    offDayCount++;
+                } else {
+                    status = 'upcoming';
+                    label = '—';
+                }
+            }
+
+            days.push({
+                dateStr,
+                dayNum: d,
+                status,
+                label,
+                isToday,
+                isPast
+            });
+        }
+
+        return {
+            year: targetYear,
+            month: targetMonth,
+            days,
+            summaryStats: {
+                present: presentCount,
+                absent: absentCount,
+                leave: leaveCount,
+                holiday: holidayCount,
+                offDay: offDayCount
+            }
+        };
+    },
+
     getAllAttendance: async (query) => {
         const { page = 1, limit = 20, employeeId, startDate, endDate, status, search, department, designation, isClockedIn, isOnBreak, adminUserId } = query;
         const skip = (page - 1) * limit;

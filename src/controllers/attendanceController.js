@@ -92,6 +92,20 @@ const attendanceController = {
         }
     },
 
+    getMyMonthSummary: async (req, res, next) => {
+        try {
+            const { year, month } = req.query;
+            const result = await attendanceService.getMyMonthSummary(req.user.id, year, month);
+            res.status(200).json({
+                success: true,
+                message: 'Monthly attendance summary fetched successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
+    },
+
     getAllAttendance: async (req, res, next) => {
         try {
             const result = await attendanceService.getAllAttendance({ ...req.query, adminUserId: req.user.id });

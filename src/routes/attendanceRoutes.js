@@ -128,6 +128,7 @@ router.post('/break-resume', attendanceController.resumeWork);
  *         description: Attendance status
  */
 router.get('/status', attendanceController.getAttendanceStatus);
+router.get('/my-month-summary', attendanceController.getMyMonthSummary);
 
 /**
  * @swagger
