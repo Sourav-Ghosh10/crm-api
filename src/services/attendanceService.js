@@ -481,8 +481,8 @@ const attendanceService = {
 
         // Calculate monthly off days and target hours
         const isHolidayApplicable = userBasic ? userBasic.isHolidayApplicable : true;
-        const holidayDates = isHolidayApplicable ? holidays.map(h => moment(h.date).tz(timezone).format('YYYY-MM-DD')) : [];
-        const shiftDates = schedules.filter(s => s.shiftType !== 'off').map(s => moment(s.date).tz(timezone).format('YYYY-MM-DD'));
+        const holidayDates = isHolidayApplicable ? holidays.map(h => moment.utc(h.date).format('YYYY-MM-DD')) : [];
+        const shiftDates = schedules.filter(s => s.shiftType !== 'off').map(s => moment.utc(s.date).format('YYYY-MM-DD'));
 
         let monthlyTargetHours = 0;
         schedules.forEach(s => {
@@ -509,8 +509,8 @@ const attendanceService = {
 
         // Calculate Attendance Percentage (Present Days / Expected Work Days So Far)
         let expectedWorkDaysSoFar = 0;
-        const currentMoment = moment(monthStart).tz(timezone);
-        const todayMoment = moment(today).tz(timezone);
+        const currentMoment = moment.tz(monthStartStr, 'YYYY-MM-DD', timezone);
+        const todayMoment = moment.tz(todayStr, 'YYYY-MM-DD', timezone);
 
         while (currentMoment.isSameOrBefore(todayMoment)) {
             const dateStr = currentMoment.format('YYYY-MM-DD');
@@ -609,10 +609,9 @@ const attendanceService = {
 
         const monthStartMoment = moment.tz(`${targetYear}-${String(targetMonth).padStart(2, '0')}-01`, 'YYYY-MM-DD', timezone).startOf('day');
         const daysInMonth = monthStartMoment.daysInMonth();
-        const monthEndMoment = moment(monthStartMoment).endOf('month');
 
-        const monthStart = monthStartMoment.toDate();
-        const monthEnd = monthEndMoment.toDate();
+        const monthStart = moment.utc(`${targetYear}-${String(targetMonth).padStart(2, '0')}-01`).startOf('day').toDate();
+        const monthEnd = moment.utc(`${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`).endOf('day').toDate();
 
         const [attendanceList, holidays, schedules, leaves] = await Promise.all([
             Attendance.find({
@@ -637,28 +636,28 @@ const attendanceService = {
         const holidayMap = {};
         if (isHolidayApplicable && holidays) {
             holidays.forEach(h => {
-                const dateStr = moment(h.date).tz(timezone).format('YYYY-MM-DD');
+                const dateStr = moment.utc(h.date).format('YYYY-MM-DD');
                 holidayMap[dateStr] = h.name || 'Holiday';
             });
         }
 
         const scheduleMap = {};
         schedules.forEach(s => {
-            const dateStr = moment(s.date).tz(timezone).format('YYYY-MM-DD');
+            const dateStr = moment.utc(s.date).format('YYYY-MM-DD');
             scheduleMap[dateStr] = s.shiftType;
         });
 
         const attendanceMap = {};
         attendanceList.forEach(r => {
-            const dateStr = moment(r.date).tz(timezone).format('YYYY-MM-DD');
+            const dateStr = moment.utc(r.date).format('YYYY-MM-DD');
             const enriched = enrichAttendanceRecord(r, timezone);
             attendanceMap[dateStr] = enriched;
         });
 
         const leaveDates = {};
         leaves.forEach(l => {
-            let curr = moment(l.startDate).tz(timezone).startOf('day');
-            const end = moment(l.endDate).tz(timezone).startOf('day');
+            let curr = moment.utc(l.startDate).startOf('day');
+            const end = moment.utc(l.endDate).startOf('day');
             while (curr.isSameOrBefore(end)) {
                 leaveDates[curr.format('YYYY-MM-DD')] = l.leaveType || 'Approved Leave';
                 curr.add(1, 'day');
@@ -761,7 +760,8 @@ const attendanceService = {
     },
 
     getAllAttendance: async (query) => {
-        const { page = 1, limit = 20, employeeId, startDate, endDate, status, search, department, designation, isClockedIn, isOnBreak, adminUserId } = query;
+        const { page = 1, limit = 20, employeeId, userId, startDate, endDate, status, search, department, designation, isClockedIn, isOnBreak, adminUserId } = query;
+        const targetEmployeeId = employeeId || userId;
         const skip = (page - 1) * limit;
 
         const filter = {};
@@ -790,10 +790,10 @@ const attendanceService = {
             const matchingUsers = await User.find(userFilter).select('_id').lean();
             const userIds = matchingUsers.map(u => u._id);
 
-            if (employeeId) {
+            if (targetEmployeeId) {
                 // If both employeeId and user filters are provided, intersect them
-                if (userIds.some(id => id.toString() === employeeId.toString())) {
-                    filter.employeeId = employeeId;
+                if (userIds.some(id => id.toString() === targetEmployeeId.toString())) {
+                    filter.employeeId = targetEmployeeId;
                 } else {
                     // No intersection, return empty
                     return { attendance: [], pagination: { total: 0, page: Number(page), limit: Number(limit), pages: 0 } };
@@ -801,8 +801,8 @@ const attendanceService = {
             } else {
                 filter.employeeId = { $in: userIds };
             }
-        } else if (employeeId) {
-            filter.employeeId = employeeId;
+        } else if (targetEmployeeId) {
+            filter.employeeId = targetEmployeeId;
         }
 
         if (status) {
@@ -815,15 +815,25 @@ const attendanceService = {
         if (startDate || endDate) {
             filter.date = {};
             let TZ = 'Asia/Kolkata';
-            const targetUserId = employeeId || adminUserId;
+            const targetUserId = targetEmployeeId || adminUserId;
             if (targetUserId) {
                 const tzUser = await User.findById(targetUserId).select('employment.timezone').lean();
                 if (tzUser?.employment?.timezone) {
                     TZ = tzUser.employment.timezone;
                 }
             }
-            if (startDate) filter.date.$gte = moment.tz(startDate.length === 10 ? startDate : moment(startDate).tz(TZ).format('YYYY-MM-DD'), 'YYYY-MM-DD', TZ).startOf('day').toDate();
-            if (endDate) filter.date.$lte = moment.tz(endDate.length === 10 ? endDate : moment(endDate).tz(TZ).format('YYYY-MM-DD'), 'YYYY-MM-DD', TZ).endOf('day').toDate();
+            if (startDate) {
+                const startStr = typeof startDate === 'string' && startDate.length === 10
+                    ? startDate
+                    : moment(startDate).tz(TZ).format('YYYY-MM-DD');
+                filter.date.$gte = moment.utc(startStr).startOf('day').toDate();
+            }
+            if (endDate) {
+                const endStr = typeof endDate === 'string' && endDate.length === 10
+                    ? endDate
+                    : moment(endDate).tz(TZ).format('YYYY-MM-DD');
+                filter.date.$lte = moment.utc(endStr).endOf('day').toDate();
+            }
         }
 
         // Real-time status filters

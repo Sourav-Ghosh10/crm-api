@@ -20,7 +20,7 @@ const getEmployeeRoster = async (userId, startDate, endDate) => {
     }
 
     const start = moment(startDate || new Date()).startOf('day');
-    const end = moment(endDate || moment().add(60, 'days')).endOf('day');
+    const end = moment(endDate || moment().add(7, 'days')).endOf('day');
 
     await ensureRosterGenerated(user, start, end);
 
@@ -248,36 +248,23 @@ const ensureRosterGenerated = async (user, startMoment, endMoment) => {
                         },
                     },
                 });
-            } else if (lastInstance && lastInstance.shiftType !== 'off') {
-                // Copy working pattern from last instance
-                bulkOps.push({
-                    insertOne: {
-                        document: {
-                            employeeId: user._id,
-                            date: dateKey,
-                            shiftType: lastInstance.shiftType,
-                            startTime: lastInstance.startTime,
-                            endTime: lastInstance.endTime,
-                            location: lastInstance.location,
-                            department: lastInstance.department,
-                            isRecurring: false,
-                        },
-                    },
-                });
             } else {
-                // Fallback to user defaults for working days
+                // Always take start and end time from user profile working hours
                 const workingHours = user.employment?.workingHours || {};
+                const startTime = workingHours.startTime || (lastInstance?.startTime?.[0]) || '09:00';
+                const endTime = workingHours.endTime || (lastInstance?.endTime?.[0]) || '18:00';
+                const isNight = startTime.localeCompare(endTime) > 0;
+
                 bulkOps.push({
                     insertOne: {
                         document: {
                             employeeId: user._id,
                             date: dateKey,
-                            shiftType: (workingHours.startTime && workingHours.endTime && workingHours.startTime > workingHours.endTime) ? 'night' : 'day',
-                            // Wrap legacy single strings from User model into arrays
-                            startTime: [workingHours.startTime || '09:00'],
-                            endTime: [workingHours.endTime || '18:00'],
-                            location: user.employment?.location || 'Office',
-                            department: user.employment?.department || 'General',
+                            shiftType: isNight ? 'night' : (lastInstance?.shiftType && lastInstance.shiftType !== 'off' ? lastInstance.shiftType : 'day'),
+                            startTime: [startTime],
+                            endTime: [endTime],
+                            location: lastInstance?.location || user.employment?.location || 'Office',
+                            department: lastInstance?.department || user.employment?.department || 'General',
                             isRecurring: false,
                         },
                     },
@@ -293,25 +280,22 @@ const ensureRosterGenerated = async (user, startMoment, endMoment) => {
 };
 
 /**
- * Generate rosters for all active users for the next 60 days.
- * Intended to be called by a cron job.
+ * Generate rosters for all active users for the next 7 days.
  */
 const generateRostersForAllUsers = async () => {
-    // console.log('Starting daily roster generation...');
     const users = await User.findActive();
-    // console.log(`Found ${users.length} active users.`);
 
-    const today = moment().startOf('day');
-    const endDate = moment().add(60, 'days').endOf('day');
+    const isSunday = moment().day() === 0;
+    const startDate = isSunday ? moment().add(1, 'day').startOf('day') : moment().startOf('day');
+    const endDate = moment(startDate).add(6, 'days').endOf('day');
 
     for (const user of users) {
         try {
-            await ensureRosterGenerated(user, today, endDate);
+            await ensureRosterGenerated(user, startDate, endDate);
         } catch (error) {
             console.error(`Error generating roster for user ${user.employeeId}:`, error);
         }
     }
-    // console.log('Daily roster generation completed.');
 };
 
 /**
@@ -319,7 +303,7 @@ const generateRostersForAllUsers = async () => {
  */
 const getAllEmployeesRosters = async ({ startDate, endDate, page = 1, limit = 10, filters = {} }) => {
     const start = moment(startDate || new Date()).startOf('day');
-    const end = moment(endDate || moment().add(60, 'days')).endOf('day');
+    const end = moment(endDate || moment().add(7, 'days')).endOf('day');
 
     const query = { isActive: true };
     if (filters.role) query['employment.role'] = filters.role;
@@ -619,7 +603,7 @@ const syncFutureSchedulesWithWorkingHours = async (userId) => {
 
     const workingHours = user.employment?.workingHours || {};
     const weeklyOffs = workingHours.weeklyOff || [];
-    const today = moment().startOf('day').toDate();
+    const today = moment.min(moment().startOf('day'), moment().utc().startOf('day')).toDate();
 
     // Find all schedules from today onwards
     const futureSchedules = await Schedule.find({
@@ -679,24 +663,19 @@ const syncAllUsersFutureSchedules = async () => {
 
 /**
  * Weekly roster process:
- * 1. Delete schedules older than today.
- * 2. Generate rosters for the next 7 days.
+ * Runs every Sunday at 11:00 PM via cron.
+ * Generates schedules ONLY for the upcoming next 7 days (Monday through Sunday).
  */
 const processWeeklyRoster = async () => {
-    const today = moment().startOf('day');
-    
-    // 1. Delete data older than today
-    const deleteResult = await Schedule.deleteMany({
-        date: { $lt: today.toDate() }
-    });
-    console.log(`[ScheduleService] Cleanup: Deleted ${deleteResult.deletedCount} schedules older than ${today.format('YYYY-MM-DD')}`);
+    // If run on Sunday (cron at 11:00 PM Sunday), upcoming week starts tomorrow Monday to next Sunday (7 days)
+    // If run on any other day, starts from today for next 7 days
+    const isSunday = moment().day() === 0;
+    const startDate = isSunday ? moment().add(1, 'day').startOf('day') : moment().startOf('day');
+    const endDate = moment(startDate).add(6, 'days').endOf('day');
 
-    // 2. Generate for next 7 days
+    console.log(`[ScheduleService] Weekly cron: Generating rosters for next 7 days (${startDate.format('YYYY-MM-DD')} to ${endDate.format('YYYY-MM-DD')})`);
+
     const users = await User.findActive();
-    const startDate = moment(today);
-    const endDate = moment(today).add(7, 'days').endOf('day');
-    
-    console.log(`[ScheduleService] Generating rosters for ${users.length} users from ${startDate.format('YYYY-MM-DD')} to ${endDate.format('YYYY-MM-DD')}`);
 
     for (const user of users) {
         try {

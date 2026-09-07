@@ -10,6 +10,14 @@ if (!global.crypto) {
   }
 }
 
+// Ensure reliable DNS resolution for MongoDB Atlas SRV records
+try {
+  const dns = require('node:dns');
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (err) {
+  // Ignore if custom DNS cannot be set
+}
+
 const app = require('./app');
 const { connectDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');

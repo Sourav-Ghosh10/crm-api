@@ -178,6 +178,17 @@ const userService = {
 
     logger.info(`User updated: ${user.employeeId}`);
 
+    // Auto-sync future schedules if working hours or weekly off were updated
+    if (updateData.employment?.workingHours) {
+      try {
+        const scheduleService = require('./scheduleService');
+        await scheduleService.syncFutureSchedulesWithWorkingHours(id);
+        logger.info(`Automatically synced future schedules for user ${user.employeeId} with updated working hours`);
+      } catch (syncError) {
+        logger.error(`Error auto-syncing schedules for user ${user.employeeId}: ${syncError.message}`);
+      }
+    }
+
     return user;
   },
 

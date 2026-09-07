@@ -14,6 +14,7 @@ const attendanceQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
   employeeId: objectIdSchema,
+  userId: objectIdSchema,
   startDate: Joi.date().iso(),
   endDate: Joi.date().iso().min(Joi.ref('startDate')),
   status: Joi.string().valid('present', 'absent', 'half-day', 'on-leave', 'holiday', 'weekend', 'Late'),
