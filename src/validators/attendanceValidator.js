@@ -40,10 +40,21 @@ const dailyTimelineSchema = Joi.object({
   userId: objectIdSchema.required()
 });
 
+const manualUpdateSchema = Joi.object({
+  employeeId: objectIdSchema.required(),
+  date: Joi.string().required(),
+  checkInTime: Joi.date().iso().allow(null, '').optional(),
+  checkOutTime: Joi.date().iso().allow(null, '').optional(),
+  status: Joi.string().valid('present', 'absent', 'half-day', 'on-leave', 'holiday', 'weekend', 'Late', 'late').optional(),
+  remarks: Joi.string().allow('', null).max(500).optional(),
+  clearPunches: Joi.boolean().optional(),
+});
+
 module.exports = {
   checkInSchema,
   checkOutSchema,
   attendanceQuerySchema,
   correctLogoutSchema,
   dailyTimelineSchema,
+  manualUpdateSchema,
 };

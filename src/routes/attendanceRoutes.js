@@ -233,6 +233,37 @@ router.get('/summary/stats', attendanceController.getAttendanceStats);
  *       200:
  *         description: Attendance details
  */
+/**
+ * @swagger
+ * /api/attendance/manual-update:
+ *   post:
+ *     summary: Manually update clock-in and clock-out for an employee
+ *     tags: [Attendance]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [employeeId, date]
+ *             properties:
+ *               employeeId: { type: string }
+ *               date: { type: string }
+ *               checkInTime: { type: string, format: date-time }
+ *               checkOutTime: { type: string, format: date-time }
+ *               status: { type: string }
+ *               remarks: { type: string }
+ *               clearPunches: { type: boolean }
+ *     responses:
+ *       200:
+ *         description: Attendance record updated successfully
+ */
+router.post(
+    '/manual-update',
+    validate(require('../validators/attendanceValidator').manualUpdateSchema),
+    attendanceController.manualAttendanceUpdate
+);
+
 router.get('/:date/:userId', validate(require('../validators/attendanceValidator').dailyTimelineSchema, 'params'), attendanceController.getDailyTimeline);
 
 router.get('/:id', validate(require('../validators/userValidator').idParamSchema, 'params'), attendanceController.getAttendanceById);

@@ -1428,6 +1428,183 @@ const attendanceService = {
         }
 
         return attendance;
+    },
+
+    manualUpdateAttendance: async (adminUserId, payload) => {
+        const { employeeId, date, checkInTime, checkOutTime, status, remarks, clearPunches } = payload;
+
+        const user = await User.findById(employeeId).lean();
+        if (!user) throw new NotFoundError('Employee not found');
+
+        const timezone = user.employment?.timezone || 'Asia/Kolkata';
+        const targetDateStr = String(date).slice(0, 10);
+        const dateObj = moment.utc(targetDateStr).toDate();
+
+        let attendance = await Attendance.findOne({
+            employeeId: user._id,
+            date: dateObj,
+        });
+
+        // Handle full clear / wipe of punches if requested or if status is explicitly absent without punch times
+        if (clearPunches || (status === 'absent' && !checkInTime && !checkOutTime)) {
+            if (!attendance) {
+                attendance = new Attendance({
+                    employeeId: user._id,
+                    date: dateObj,
+                    status: ATTENDANCE_STATUS.ABSENT,
+                    sessions: [],
+                    remarks: remarks || 'Marked absent by admin',
+                    correctedBy: adminUserId,
+                    correctedAt: new Date(),
+                    correctionSource: 'manual_admin',
+                });
+            } else {
+                attendance.sessions = [];
+                attendance.checkIn = undefined;
+                attendance.checkOut = undefined;
+                attendance.totalHours = 0;
+                attendance.totalDurationString = '0S';
+                attendance.status = ATTENDANCE_STATUS.ABSENT;
+                attendance.remarks = remarks || 'Punches cleared by admin';
+                attendance.correctedBy = adminUserId;
+                attendance.correctedAt = new Date();
+                attendance.correctionSource = 'manual_admin';
+            }
+            await attendance.save();
+            return enrichAttendanceRecord(attendance.toObject ? attendance.toObject() : attendance, timezone);
+        }
+
+        const checkInDate = checkInTime ? new Date(checkInTime) : null;
+        const checkOutDate = checkOutTime ? new Date(checkOutTime) : null;
+
+        if (checkInDate && checkOutDate && checkOutDate <= checkInDate) {
+            throw new BadRequestError('Clock out time must be after clock in time.');
+        }
+
+        // Schedule check for punctuality (Late determination)
+        const schedule = await Schedule.findOne({
+            employeeId: user._id,
+            date: dateObj,
+        });
+
+        let isLate = false;
+        if (schedule && schedule.startTime && schedule.startTime.length > 0 && checkInDate) {
+            const shiftStartTimeStr = schedule.startTime[0];
+            const shiftStart = moment.tz(`${targetDateStr} ${shiftStartTimeStr}`, 'YYYY-MM-DD HH:mm', timezone);
+            if (moment(checkInDate).isAfter(moment(shiftStart).add(15, 'minutes'))) {
+                isLate = true;
+            }
+        }
+
+        let resolvedStatus = status;
+        if (!resolvedStatus) {
+            if (checkInDate) {
+                resolvedStatus = isLate ? ATTENDANCE_STATUS.LATE : ATTENDANCE_STATUS.PRESENT;
+            } else if (attendance && attendance.status) {
+                resolvedStatus = attendance.status;
+            } else {
+                resolvedStatus = ATTENDANCE_STATUS.PRESENT;
+            }
+        }
+
+        if (!attendance) {
+            const checkInObj = checkInDate ? {
+                time: checkInDate,
+                ipAddress: 'Admin-Manual',
+                deviceInfo: 'Admin-Portal',
+            } : undefined;
+
+            const checkOutObj = checkOutDate ? {
+                time: checkOutDate,
+                ipAddress: 'Admin-Manual',
+                deviceInfo: 'Admin-Portal',
+            } : undefined;
+
+            const sessions = [];
+            if (checkInObj) {
+                sessions.push({
+                    checkIn: checkInObj,
+                    checkOut: checkOutObj,
+                    isLate: !!isLate,
+                    isEarlyLeave: false,
+                });
+            }
+
+            attendance = new Attendance({
+                employeeId: user._id,
+                date: dateObj,
+                checkIn: checkInObj,
+                checkOut: checkOutObj,
+                sessions,
+                status: resolvedStatus,
+                isLate: !!isLate,
+                remarks: remarks || 'Manual entry by admin',
+                correctedBy: adminUserId,
+                correctedAt: new Date(),
+                correctionSource: 'manual_admin',
+            });
+        } else {
+            if (checkInDate) {
+                attendance.checkIn = {
+                    ...(attendance.checkIn ? (attendance.checkIn.toObject ? attendance.checkIn.toObject() : attendance.checkIn) : {}),
+                    time: checkInDate,
+                    ipAddress: attendance.checkIn?.ipAddress || 'Admin-Manual',
+                    deviceInfo: attendance.checkIn?.deviceInfo || 'Admin-Portal',
+                };
+            }
+
+            if (checkOutDate) {
+                attendance.checkOut = {
+                    ...(attendance.checkOut ? (attendance.checkOut.toObject ? attendance.checkOut.toObject() : attendance.checkOut) : {}),
+                    time: checkOutDate,
+                    ipAddress: attendance.checkOut?.ipAddress || 'Admin-Manual',
+                    deviceInfo: attendance.checkOut?.deviceInfo || 'Admin-Portal',
+                };
+            } else if (checkOutTime === null) {
+                attendance.checkOut = undefined;
+            }
+
+            if (!attendance.sessions || attendance.sessions.length === 0) {
+                if (attendance.checkIn && attendance.checkIn.time) {
+                    attendance.sessions = [{
+                        checkIn: attendance.checkIn,
+                        checkOut: attendance.checkOut,
+                        isLate: !!isLate,
+                        isEarlyLeave: false,
+                    }];
+                }
+            } else {
+                if (checkInDate) {
+                    attendance.sessions[0].checkIn = attendance.checkIn;
+                    attendance.sessions[0].isLate = !!isLate;
+                }
+                const lastIdx = attendance.sessions.length - 1;
+                if (checkOutDate) {
+                    attendance.sessions[lastIdx].checkOut = attendance.checkOut;
+                } else if (checkOutTime === null) {
+                    attendance.sessions[lastIdx].checkOut = undefined;
+                }
+            }
+
+            attendance.status = resolvedStatus;
+            if (remarks) {
+                attendance.remarks = remarks;
+            }
+            attendance.correctedBy = adminUserId;
+            attendance.correctedAt = new Date();
+            attendance.correctionSource = 'manual_admin';
+            attendance.markModified('sessions');
+            attendance.markModified('checkIn');
+            attendance.markModified('checkOut');
+        }
+
+        await attendance.save();
+
+        const populated = await Attendance.findById(attendance._id)
+            .populate('employeeId', 'personalInfo employment')
+            .lean();
+
+        return enrichAttendanceRecord(populated, timezone);
     }
 };
 

@@ -204,6 +204,18 @@ const attendanceController = {
         } catch (error) {
             next(error);
         }
+    },
+    manualAttendanceUpdate: async (req, res, next) => {
+        try {
+            const result = await attendanceService.manualUpdateAttendance(req.user.id, req.body);
+            res.status(200).json({
+                success: true,
+                message: 'Attendance record updated successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
     }
 };
 
