@@ -5,9 +5,19 @@ const { UnauthorizedError, NotFoundError } = require('../../src/utils/errors');
 // Mock the User model
 jest.mock('../../src/models/User');
 
+// Mock Attendance model
+jest.mock('../../src/models/Attendance', () => ({
+    findOne: jest.fn(() => ({
+        sort: jest.fn(() => ({
+            lean: jest.fn(() => Promise.resolve(null)),
+        })),
+    })),
+}));
+
 // Mock Redis
 jest.mock('../../src/config/redis', () => ({
     getRedisClient: jest.fn(() => ({
+        set: jest.fn(),
         setEx: jest.fn(),
         del: jest.fn(),
         exists: jest.fn(() => Promise.resolve(1)),
@@ -47,7 +57,9 @@ describe('AuthService', () => {
 
             // Mock User.findOne
             User.findOne = jest.fn(() => ({
-                select: jest.fn(() => Promise.resolve(mockUser)),
+                select: jest.fn(() => ({
+                    populate: jest.fn(() => Promise.resolve(mockUser)),
+                })),
             }));
 
             const result = await authService.login({
@@ -66,7 +78,9 @@ describe('AuthService', () => {
 
         it('should throw UnauthorizedError for non-existent user', async () => {
             User.findOne = jest.fn(() => ({
-                select: jest.fn(() => Promise.resolve(null)),
+                select: jest.fn(() => ({
+                    populate: jest.fn(() => Promise.resolve(null)),
+                })),
             }));
 
             await expect(
@@ -88,7 +102,9 @@ describe('AuthService', () => {
             };
 
             User.findOne = jest.fn(() => ({
-                select: jest.fn(() => Promise.resolve(mockUser)),
+                select: jest.fn(() => ({
+                    populate: jest.fn(() => Promise.resolve(mockUser)),
+                })),
             }));
 
             await expect(
@@ -114,7 +130,9 @@ describe('AuthService', () => {
             };
 
             User.findOne = jest.fn(() => ({
-                select: jest.fn(() => Promise.resolve(mockUser)),
+                select: jest.fn(() => ({
+                    populate: jest.fn(() => Promise.resolve(mockUser)),
+                })),
             }));
 
             await expect(

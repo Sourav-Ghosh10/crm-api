@@ -57,21 +57,32 @@ const authService = {
     user.lastLogin = new Date();
     await user.save();
 
+    // Determine if employee login (either from employee portal !checked or user is non-admin/employee)
+    const isEmployee = !checked || !user.isAdmin || (user.employment && user.employment.role === 'employee');
+
     // Generate session
     const sessionId = generateSessionId();
-    const accessToken = generateAccessToken(user._id, sessionId);
-    const refreshToken = generateRefreshToken(user._id, sessionId);
+    const accessToken = generateAccessToken(user._id, sessionId, { isEmployee });
+    const refreshToken = generateRefreshToken(user._id, sessionId, { isEmployee });
 
     // Store session in Redis
     const redisClient = getRedisClient();
     if (redisClient) {
       const sessionKey = `session:${user._id}:${sessionId}`;
       try {
-        await redisClient.setEx(
-          sessionKey,
-          SESSION_EXPIRY_SECONDS,
-          JSON.stringify({ userId: user._id, sessionId, ipAddress })
-        );
+        if (isEmployee) {
+          // Employee sessions do not expire
+          await redisClient.set(
+            sessionKey,
+            JSON.stringify({ userId: user._id, sessionId, ipAddress })
+          );
+        } else {
+          await redisClient.setEx(
+            sessionKey,
+            SESSION_EXPIRY_SECONDS,
+            JSON.stringify({ userId: user._id, sessionId, ipAddress })
+          );
+        }
       } catch (redisError) {
         console.error('🚨 Failed to store session in Redis during login:', redisError.message);
         logger.error('Failed to store session in Redis:', redisError);
@@ -152,10 +163,14 @@ const authService = {
       }
     }
 
+    // Find user to check if employee
+    const user = await User.findById(decoded.userId);
+    const isEmployee = user ? (!user.isAdmin || (user.employment && user.employment.role === 'employee')) : true;
+
     // Generate new tokens
     const { sessionId } = decoded;
-    const newAccessToken = generateAccessToken(decoded.userId, sessionId);
-    const newRefreshToken = generateRefreshToken(decoded.userId, sessionId);
+    const newAccessToken = generateAccessToken(decoded.userId, sessionId, { isEmployee });
+    const newRefreshToken = generateRefreshToken(decoded.userId, sessionId, { isEmployee });
 
     return {
       accessToken: newAccessToken,
@@ -270,19 +285,28 @@ const authService = {
     user.accountLockedUntil = null;
     await user.save();
 
+    const isEmployee = !user.isAdmin || (user.employment && user.employment.role === 'employee');
     const sessionId = generateSessionId();
-    const accessToken = generateAccessToken(user._id, sessionId);
-    const refreshToken = generateRefreshToken(user._id, sessionId);
+    const accessToken = generateAccessToken(user._id, sessionId, { isEmployee });
+    const refreshToken = generateRefreshToken(user._id, sessionId, { isEmployee });
 
     const redisClient = getRedisClient();
     if (redisClient) {
       const sessionKey = `session:${user._id}:${sessionId}`;
       try {
-        await redisClient.setEx(
-          sessionKey,
-          SESSION_EXPIRY_SECONDS,
-          JSON.stringify({ userId: user._id, sessionId, ipAddress })
-        );
+        if (isEmployee) {
+          // Employee sessions do not expire
+          await redisClient.set(
+            sessionKey,
+            JSON.stringify({ userId: user._id, sessionId, ipAddress })
+          );
+        } else {
+          await redisClient.setEx(
+            sessionKey,
+            SESSION_EXPIRY_SECONDS,
+            JSON.stringify({ userId: user._id, sessionId, ipAddress })
+          );
+        }
       } catch (redisError) {
         logger.error('Failed to store session in Redis:', redisError);
       }
