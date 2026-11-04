@@ -133,6 +133,25 @@ const changePasswordSchema = Joi.object({
   })
 });
 
+const adjustTimezoneHoursSchema = Joi.object({
+  timezone: Joi.string().trim().required().messages({
+    'any.required': 'Timezone is required',
+    'string.empty': 'Timezone cannot be empty',
+  }),
+  direction: Joi.string().valid('add', 'subtract').required().messages({
+    'any.required': 'Direction ("add" or "subtract") is required',
+    'any.only': 'Direction must be either "add" or "subtract"',
+  }),
+  hours: Joi.number().integer().min(0).max(23).default(0),
+  minutes: Joi.number().integer().min(0).max(59).default(0),
+  syncFutureSchedules: Joi.boolean().default(true),
+}).custom((value, helpers) => {
+  if ((value.hours || 0) === 0 && (value.minutes || 0) === 0) {
+    return helpers.message('Please specify at least 1 minute or 1 hour to adjust');
+  }
+  return value;
+});
+
 module.exports = {
   userQuerySchema,
   createUserSchema,
@@ -140,4 +159,5 @@ module.exports = {
   idParamSchema,
   statusToggleSchema,
   changePasswordSchema,
+  adjustTimezoneHoursSchema,
 };

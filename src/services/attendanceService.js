@@ -175,15 +175,15 @@ const attendanceService = {
                     throw new BadRequestError(`You have already completed your ${schedule.startTime.length} scheduled shift(s) for today.`);
                 }
 
-                // 2. Time Buffer Check: Can only clock in within 30 mins before shift starts
+                // 2. Time Buffer Check: Can only clock in within 2.5 hours (150 mins) before shift starts
                 const shiftStartTimeStr = schedule.startTime[currentSessionIndex];
                 const shiftStart = moment.tz(`${moment(today).format('YYYY-MM-DD')} ${shiftStartTimeStr}`, 'YYYY-MM-DD HH:mm', timezone);
                 const checkInTime = moment(now).tz(timezone);
 
-                const bufferStartTime = moment(shiftStart).subtract(30, 'minutes');
+                const bufferStartTime = moment(shiftStart).subtract(150, 'minutes');
 
                 if (checkInTime.isBefore(bufferStartTime)) {
-                    throw new BadRequestError(`You can only clock in up to 30 minutes before your shift starts (Shift start: ${shiftStartTimeStr}).`);
+                    throw new BadRequestError(`You can only clock in up to 2 hours 30 minutes before your shift starts (Shift start: ${shiftStartTimeStr}).`);
                 }
 
                 // Check Late (grace period 15 mins)

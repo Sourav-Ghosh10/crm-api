@@ -104,6 +104,33 @@ const userController = {
       next(error);
     }
   },
+
+  getTimezonesSummary: async (req, res, next) => {
+    try {
+      const result = await userService.getTimezonesSummary();
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  adjustTimezoneHours: async (req, res, next) => {
+    try {
+      const result = await userService.adjustTimezoneHours(req.body);
+      const signText = result.direction === 'add' ? '+' : '-';
+      const timeText = `${signText}${result.hours}h${result.minutes > 0 ? ` ${result.minutes}m` : ''}`;
+      res.status(200).json({
+        success: true,
+        message: `Successfully shifted working hours by ${timeText} for ${result.updatedUsersCount} employee(s) in timezone ${result.timezone}.`,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 module.exports = userController;

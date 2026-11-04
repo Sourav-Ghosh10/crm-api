@@ -1,7 +1,24 @@
 const User = require('../models/User');
-const { NotFoundError, ConflictError } = require('../utils/errors');
+const { NotFoundError, ConflictError, BadRequestError } = require('../utils/errors');
 // const { hashPassword } = require('../utils/passwordUtils');
 const logger = require('../utils/logger');
+
+const shiftTime = (timeStr, offsetMinutes) => {
+  if (!timeStr || typeof timeStr !== 'string') return timeStr;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return timeStr;
+
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  let totalMinutes = hours * 60 + minutes + offsetMinutes;
+
+  // Wrap around 24 hours (1440 minutes)
+  totalMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+
+  const newHours = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+  const newMinutes = (totalMinutes % 60).toString().padStart(2, '0');
+  return `${newHours}:${newMinutes}`;
+};
 
 const userService = {
   getUsers: async ({ page, limit, filters }) => {
@@ -220,6 +237,110 @@ const userService = {
     logger.info(`User ${data.isActive ? 'activated' : 'deactivated'}: ${user.employeeId}`);
 
     return user;
+  },
+
+  getTimezonesSummary: async () => {
+    const summary = await User.aggregate([
+      { $match: { isActive: true } },
+      {
+        $group: {
+          _id: { $ifNull: ['$employment.timezone', 'Asia/Kolkata'] },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+    ]);
+    return summary.map((item) => ({
+      timezone: item._id,
+      count: item.count,
+    }));
+  },
+
+  adjustTimezoneHours: async ({ timezone, direction, hours = 0, minutes = 0, syncFutureSchedules = true }) => {
+    const sign = direction === 'subtract' ? -1 : 1;
+    const totalOffsetMinutes = sign * (parseInt(hours, 10) * 60 + parseInt(minutes, 10));
+
+    if (totalOffsetMinutes === 0) {
+      throw new BadRequestError('Adjustment cannot be 0 minutes.');
+    }
+
+    const filter = {
+      isActive: true,
+      $or: [
+        { 'employment.timezone': timezone },
+        ...(timezone === 'Asia/Kolkata'
+          ? [
+              { 'employment.timezone': { $exists: false } },
+              { 'employment.timezone': null },
+              { 'employment.timezone': '' },
+            ]
+          : []),
+      ],
+    };
+
+    const users = await User.find(filter);
+
+    if (users.length === 0) {
+      return {
+        timezone,
+        offsetMinutes: totalOffsetMinutes,
+        direction,
+        hours: parseInt(hours, 10),
+        minutes: parseInt(minutes, 10),
+        updatedUsersCount: 0,
+        users: [],
+        message: `No active employees found with timezone "${timezone}".`,
+      };
+    }
+
+    const scheduleService = require('./scheduleService');
+    const updatedUsers = [];
+
+    for (const user of users) {
+      const currentStart = user.employment?.workingHours?.startTime || '09:00';
+      const currentEnd = user.employment?.workingHours?.endTime || '18:00';
+
+      const newStart = shiftTime(currentStart, totalOffsetMinutes);
+      const newEnd = shiftTime(currentEnd, totalOffsetMinutes);
+
+      await User.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            'employment.workingHours.startTime': newStart,
+            'employment.workingHours.endTime': newEnd,
+          },
+        }
+      );
+
+      if (syncFutureSchedules) {
+        try {
+          await scheduleService.syncFutureSchedulesWithWorkingHours(user._id);
+        } catch (err) {
+          logger.error(`Failed to sync future schedules for user ${user.employeeId}: ${err.message}`);
+        }
+      }
+
+      updatedUsers.push({
+        _id: user._id,
+        employeeId: user.employeeId,
+        name: `${user.personalInfo?.firstName || ''} ${user.personalInfo?.lastName || ''}`.trim(),
+        oldWorkingHours: { startTime: currentStart, endTime: currentEnd },
+        newWorkingHours: { startTime: newStart, endTime: newEnd },
+      });
+    }
+
+    logger.info(`Adjusted working hours by ${totalOffsetMinutes} minutes for ${users.length} users in timezone ${timezone}`);
+
+    return {
+      timezone,
+      offsetMinutes: totalOffsetMinutes,
+      direction,
+      hours: parseInt(hours, 10),
+      minutes: parseInt(minutes, 10),
+      updatedUsersCount: users.length,
+      users: updatedUsers,
+    };
   },
 };
 

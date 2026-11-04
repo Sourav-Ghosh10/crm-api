@@ -9,6 +9,7 @@ const {
     userQuerySchema,
     statusToggleSchema,
     changePasswordSchema,
+    adjustTimezoneHoursSchema,
 } = require('../validators/userValidator');
 
 const router = express.Router();
@@ -99,6 +100,9 @@ router.use(authenticate);
  */
 router.post('/', validate(createUserSchema), userController.createUser);
 router.get('/', validate(userQuerySchema, 'query'), userController.getUsers);
+
+router.get('/timezones-summary', userController.getTimezonesSummary);
+router.post('/adjust-timezone-hours', validate(adjustTimezoneHoursSchema), userController.adjustTimezoneHours);
 
 /**
  * @swagger
