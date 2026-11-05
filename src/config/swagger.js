@@ -15,6 +15,14 @@ const options = {
     },
     servers: [
       {
+        url: 'https://api.codecit.in',
+        description: 'Production server',
+      },
+      {
+        url: 'https://stageapi.codecit.in',
+        description: 'Staging server',
+      },
+      {
         url: `http://localhost:${port}`,
         description: 'Development server',
       },
