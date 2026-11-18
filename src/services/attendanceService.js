@@ -10,6 +10,8 @@ const logger = require('../utils/logger');
 const holidayService = require('./holidayService');
 const { getRealTime } = require('../utils/realTime');
 
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Shared Helper: Format duration in MS to "1H 2M 2S"
 const formatDuration = (ms) => {
     const seconds = Math.floor((ms / 1000) % 60);
@@ -760,17 +762,18 @@ const attendanceService = {
     },
 
     getAllAttendance: async (query) => {
-        const { page = 1, limit = 20, employeeId, userId, startDate, endDate, status, search, department, designation, isClockedIn, isOnBreak, adminUserId } = query;
+        const { page = 1, limit = 20, employeeId, userId, startDate, endDate, status, search, department, designation, location, isClockedIn, isOnBreak, adminUserId } = query;
         const targetEmployeeId = employeeId || userId;
         const skip = (page - 1) * limit;
 
         const filter = {};
 
-        // Handle User-related filters (search, department, designation)
-        if (search || department || designation) {
+        // Handle User-related filters (search, department, designation, location)
+        if (search || department || designation || (location && location !== 'all')) {
             const userFilter = {};
-            if (department) userFilter['employment.department'] = { $regex: department, $options: 'i' };
-            if (designation) userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
+            if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
+            if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
+            if (location && location !== 'all') userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
             if (search) {
                 userFilter.$or = [
                     { 'personalInfo.firstName': { $regex: search, $options: 'i' } },
@@ -1081,7 +1084,7 @@ const attendanceService = {
         return { requiresLogoutCorrection: false };
     },
 
-    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, search, status, isLate, adminUserId }) => {
+    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, location, search, status, isLate, adminUserId }) => {
         const skip = (page - 1) * limit;
         
         // Dynamically fetch admin/requester timezone
@@ -1100,6 +1103,7 @@ const attendanceService = {
         const userFilter = { isActive: true };
         if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
         if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
+        if (location && location !== 'all') userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
         if (search) {
             userFilter.$or = [
                 { 'personalInfo.firstName': { $regex: search, $options: 'i' } },
@@ -1220,7 +1224,7 @@ const attendanceService = {
         };
     },
 
-    getStats: async ({ date, department, designation, adminUserId }) => {
+    getStats: async ({ date, department, designation, location, adminUserId }) => {
         // Dynamically fetch admin/requester timezone
         let DEFAULT_TZ = 'Asia/Kolkata';
         if (adminUserId) {
@@ -1236,6 +1240,7 @@ const attendanceService = {
         const userFilter = { isActive: true };
         if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
         if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
+        if (location && location !== 'all') userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
 
         const totalActiveEmployees = await User.countDocuments(userFilter);
         const activeUserIds = await User.find(userFilter).distinct('_id');

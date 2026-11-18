@@ -7,6 +7,14 @@ const { generatePayslipPDF } = require('../utils/pdfGenerator');
 const { NotFoundError, ConflictError } = require('../utils/errors');
 const logger = require('../utils/logger');
 
+const hasNumericOverride = (val) => val !== null && val !== undefined && val !== '' && !isNaN(Number(val));
+
+const isBasicComponent = (master) => {
+  const code = String(master?.code || '').trim().toUpperCase();
+  const name = String(master?.name || '').trim().toLowerCase();
+  return code === 'BASIC' || name === 'basic' || name === 'basic salary';
+};
+
 const calculatePayslipComponents = (salaryConfig, totalDays, daysWorked, manualOverrides = {}, additionalEarnings = []) => {
   const items = [];
   let grossEarnings = 0;
@@ -16,187 +24,164 @@ const calculatePayslipComponents = (salaryConfig, totalDays, daysWorked, manualO
   const baseAmount = Number(salaryConfig.monthlyCTC || salaryConfig.basicSalary || 0);
   const safeTotalDays = Number(totalDays) || 30;
   const safeDaysWorked = Number(daysWorked) || 0;
+  const prorationRatio = safeDaysWorked / safeTotalDays;
 
-  const adjustedCTC = (baseAmount / safeTotalDays) * safeDaysWorked;
-  
-  // First Pass: Calculate all components based on CTC or FIXED
-  const processedItems = [];
-  for (const item of salaryConfig.items) {
-    if (!item.isActive) continue;
+  const adjustedCTC = baseAmount * prorationRatio;
+  const activeItems = (salaryConfig.items || []).filter((item) => item.isActive && item.masterId);
+
+  // Track which masterIds have already been calculated
+  const resolvedIds = new Set();
+  const orderMap = new Map();
+  activeItems.forEach((item, idx) => {
+    const mId = String(item.masterId._id);
+    orderMap.set(mId, item.masterId.displayOrder ?? idx);
+  });
+
+  const recordItem = (master, rawFinalAmount, isManualOverride) => {
+    let finalAmount = rawFinalAmount;
+    let overridden = isManualOverride;
+
+    const mId = String(master._id);
+    if (hasNumericOverride(manualOverrides[mId])) {
+      finalAmount = Number(manualOverrides[mId]);
+      overridden = true;
+    }
+
+    const rounded = Math.round(finalAmount * 100) / 100;
+    items.push({
+      masterId: master._id,
+      name: master.name,
+      code: master.code,
+      type: master.type,
+      amount: rounded,
+      isManualOverride: overridden,
+    });
+
+    if (master.type === 'ALLOWANCE') grossEarnings += rounded;
+    else totalDeductions += rounded;
+
+    resolvedIds.add(mId);
+  };
+
+  // Pass 1: Explicit Override Values (₹), FIXED components, PERCENTAGE of CTC, and Basic Salary
+  // Basic Salary MUST be resolved in Pass 1 so BASIC-dependent components in Pass 2 always have the right base.
+  for (const item of activeItems) {
     const master = item.masterId;
-    if (!master || master.isBalancing) continue;
+    const mId = String(master._id);
+    const hasOverride = hasNumericOverride(item.overrideValue);
 
-    let amount = item.overrideValue !== null ? Number(item.overrideValue) : Number(master.value || 0);
-
-    if ((master.calculationType === 'PERCENTAGE' || master.calculationType === 'SLAB') && (master.percentageOf === 'BASIC' || master.percentageOf === 'GROSS')) {
-      processedItems.push(item);
+    if (hasOverride) {
+      const monthlyAmount = Number(item.overrideValue);
+      if (isBasicComponent(master)) {
+        basicComponentValue = monthlyAmount;
+      }
+      recordItem(master, monthlyAmount * prorationRatio, true);
       continue;
     }
 
-    if (master.calculationType === 'PERCENTAGE') {
-      amount = (baseAmount * amount) / 100;
+    if (master.isBalancing) continue;
+
+    const isBasic = isBasicComponent(master);
+    const isFixed = master.calculationType === 'FIXED';
+    const isPctOfCtc = master.calculationType === 'PERCENTAGE' && (!master.percentageOf || master.percentageOf === 'CTC');
+
+    if (isBasic || isFixed || isPctOfCtc) {
+      let monthlyAmount = Number(master.value || 0);
+      if (master.calculationType === 'PERCENTAGE') {
+        monthlyAmount = (baseAmount * monthlyAmount) / 100;
+      }
+
+      if (isBasic) {
+        basicComponentValue = monthlyAmount;
+      }
+
+      recordItem(master, monthlyAmount * prorationRatio, false);
     }
-
-    let finalAmount = (amount / safeTotalDays) * safeDaysWorked;
-    let isManualOverride = false;
-    if (manualOverrides[master._id]) {
-      finalAmount = Number(manualOverrides[master._id]);
-      isManualOverride = true;
-    }
-
-    if (master.code === 'BASIC') {
-      basicComponentValue = amount; // Use raw monthly basic for other dependencies
-    }
-
-    items.push({
-      masterId: master._id,
-      name: master.name,
-      code: master.code,
-      type: master.type,
-      amount: Math.round(finalAmount * 100) / 100,
-      isManualOverride
-    });
-
-    if (master.type === 'ALLOWANCE') grossEarnings += finalAmount;
-    else totalDeductions += finalAmount;
   }
 
-  // Second Pass: Calculate components based on BASIC
-  for (const item of processedItems) {
+  // Pass 2: Un-overridden components calculated as PERCENTAGE of BASIC
+  for (const item of activeItems) {
     const master = item.masterId;
-    
-    // Only process PERCENTAGE of BASIC here.
-    // SLABs and PERCENTAGE of GROSS are handled in Pass 4.
-    if (!(master.calculationType === 'PERCENTAGE' && master.percentageOf === 'BASIC')) {
-      continue;
+    const mId = String(master._id);
+    if (resolvedIds.has(mId) || master.isBalancing) continue;
+
+    if (master.calculationType === 'PERCENTAGE' && master.percentageOf === 'BASIC') {
+      const monthlyAmount = (basicComponentValue * Number(master.value || 0)) / 100;
+      recordItem(master, monthlyAmount * prorationRatio, false);
     }
-
-    let amount = item.overrideValue !== null ? Number(item.overrideValue) : Number(master.value || 0);
-    amount = (basicComponentValue * amount) / 100;
-
-    let finalAmount = (amount / safeTotalDays) * safeDaysWorked;
-    let isManualOverride = false;
-    if (manualOverrides[master._id]) {
-      finalAmount = Number(manualOverrides[master._id]);
-      isManualOverride = true;
-    }
-
-    items.push({
-      masterId: master._id,
-      name: master.name,
-      code: master.code,
-      type: master.type,
-      amount: Math.round(finalAmount * 100) / 100,
-      isManualOverride
-    });
-
-    if (master.type === 'ALLOWANCE') grossEarnings += finalAmount;
-    else totalDeductions += finalAmount;
   }
 
-  // Third Pass: Balancing Components (CTC Remainder)
-  for (const item of salaryConfig.items) {
-    if (!item.isActive) continue;
+  // Pass 3: Un-overridden Balancing Components (CTC Remainder)
+  for (const item of activeItems) {
     const master = item.masterId;
-    if (!master || !master.isBalancing) continue;
+    const mId = String(master._id);
+    if (resolvedIds.has(mId) || !master.isBalancing) continue;
 
-    let balancingAmount = Math.max(0, adjustedCTC - grossEarnings);
-    let isManualOverride = false;
-    if (manualOverrides[master._id]) {
-      balancingAmount = Number(manualOverrides[master._id]);
-      isManualOverride = true;
-    }
-
-    items.push({
-      masterId: master._id,
-      name: master.name,
-      code: master.code,
-      type: master.type,
-      amount: Math.round(balancingAmount * 100) / 100,
-      isManualOverride
-    });
-
-    if (master.type === 'ALLOWANCE') grossEarnings += balancingAmount;
-    else totalDeductions += balancingAmount;
+    const balancingAmount = Math.max(0, adjustedCTC - grossEarnings);
+    recordItem(master, balancingAmount, false);
   }
 
-  // Fourth Pass: Calculate components based on GROSS (finalized earnings)
-  for (const item of salaryConfig.items) {
-    if (!item.isActive) continue;
+  // Pass 4: Un-overridden components based on GROSS (finalized earnings) and SLAB
+  for (const item of activeItems) {
     const master = item.masterId;
-    if (!master || master.isBalancing) continue;
+    const mId = String(master._id);
+    if (resolvedIds.has(mId)) continue;
 
     if (master.calculationType === 'PERCENTAGE' && master.percentageOf === 'GROSS') {
-      let amount = (grossEarnings * master.value) / 100;
-      let isManualOverride = false;
-      if (manualOverrides[master._id]) {
-        amount = Number(manualOverrides[master._id]);
-        isManualOverride = true;
-      }
-      
-      items.push({
-        masterId: master._id,
-        name: master.name,
-        code: master.code,
-        type: master.type,
-        amount: Math.round(amount * 100) / 100,
-        isManualOverride
-      });
+      const amount = (grossEarnings * Number(master.value || 0)) / 100;
+      recordItem(master, amount, false);
+    } else if (master.calculationType === 'SLAB') {
+      const baseForSlab =
+        master.percentageOf === 'BASIC'
+          ? basicComponentValue * prorationRatio
+          : master.percentageOf === 'GROSS'
+            ? grossEarnings
+            : adjustedCTC;
 
-      if (master.type === 'ALLOWANCE') grossEarnings += amount;
-      else totalDeductions += amount;
-    } 
-    else if (master.calculationType === 'SLAB') {
-      const baseForSlab = master.percentageOf === 'BASIC' ? basicComponentValue : 
-                         master.percentageOf === 'GROSS' ? grossEarnings : baseAmount;
-      
-      const slab = (master.slabs || []).find(s => 
-        baseForSlab >= s.minAmount && (!s.maxAmount || baseForSlab <= s.maxAmount)
+      const slab = (master.slabs || []).find(
+        (s) => baseForSlab >= s.minAmount && (!s.maxAmount || baseForSlab <= s.maxAmount)
       );
-      
-      let amount = slab ? slab.fixedAmount : 0;
-      let isManualOverride = false;
-      if (manualOverrides[master._id]) {
-        amount = Number(manualOverrides[master._id]);
-        isManualOverride = true;
-      }
 
-      items.push({
-        masterId: master._id,
-        name: master.name,
-        code: master.code,
-        type: master.type,
-        amount: Math.round(amount * 100) / 100,
-        isManualOverride
-      });
-
-      if (master.type === 'ALLOWANCE') grossEarnings += amount;
-      else totalDeductions += amount;
+      const amount = slab ? Number(slab.fixedAmount || 0) : 0;
+      recordItem(master, amount, false);
     }
   }
 
-  // Fifth Pass: Additional Custom Earnings (like Stacks, Incentives)
+  // Keep items in their displayOrder / config order
+  items.sort((a, b) => {
+    const orderA = orderMap.get(String(a.masterId)) ?? 9999;
+    const orderB = orderMap.get(String(b.masterId)) ?? 9999;
+    return orderA - orderB;
+  });
+
+  // Pass 5: Additional Custom Earnings (like Stacks, Incentives)
+  let additionalEarningsTotal = 0;
   for (const extra of additionalEarnings) {
     if (!extra.name || !extra.amount) continue;
+    const rounded = Math.round(Number(extra.amount) * 100) / 100;
     items.push({
-      masterId: null, // Allow null since it's not required in Mongoose if not explicitly specified as such
+      masterId: null,
       name: extra.name,
       code: extra.code || 'CUSTOM',
       type: 'ALLOWANCE',
-      amount: Math.round(Number(extra.amount) * 100) / 100,
-      isManualOverride: true
+      amount: rounded,
+      isManualOverride: true,
     });
-    grossEarnings += Number(extra.amount);
+    grossEarnings += rounded;
+    additionalEarningsTotal += rounded;
   }
 
-  const netPay = grossEarnings - totalDeductions;
+  // Net Pay = (Prorated Monthly CTC + Additional Earnings) - Total Deductions
+  // (Falls back to grossEarnings - totalDeductions only if monthlyCTC is not set)
+  const netPayBase = adjustedCTC > 0 ? adjustedCTC + additionalEarningsTotal : grossEarnings;
+  const netPay = netPayBase - totalDeductions;
 
   return {
     items,
     grossEarnings: Math.round(grossEarnings * 100) / 100,
     totalDeductions: Math.round(totalDeductions * 100) / 100,
     netPay: Math.round(netPay * 100) / 100,
-    adjustedCTC: Math.round(adjustedCTC * 100) / 100
+    adjustedCTC: Math.round(adjustedCTC * 100) / 100,
   };
 };
 
@@ -206,11 +191,16 @@ const payslipService = {
     if (filters.employeeId) query.employeeId = filters.employeeId;
     if (filters.month) query.month = filters.month;
     if (filters.year) query.year = filters.year;
+    if (filters.status && filters.excludeStatus && filters.status === filters.excludeStatus) {
+      return { payslips: [], total: 0 };
+    }
     if (filters.status) query.status = filters.status;
+    else if (filters.excludeStatus) query.status = { $ne: filters.excludeStatus };
 
     const [payslips, total] = await Promise.all([
       Payslip.find(query)
-        .populate('employeeId', 'personalInfo employment')
+        .populate('employeeId', 'employeeId personalInfo employment')
+        .populate('salaryConfigId', 'bankName bankAccountNo')
         .sort({ year: -1, month: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -223,7 +213,7 @@ const payslipService = {
 
   getPayslipById: async (id) => {
     const payslip = await Payslip.findById(id)
-      .populate('employeeId', 'personalInfo employment')
+      .populate('employeeId', 'employeeId personalInfo employment')
       .populate('salaryConfigId')
       .lean();
     if (!payslip) {

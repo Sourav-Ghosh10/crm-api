@@ -25,7 +25,7 @@ const dateRange = (startYMD, endYMD) => {
 };
 
 // ─── Build pivot monthly attendance workbook ─────────────────────────────────
-const generateMonthlyPivotExcel = async (startDate, endDate, filterDept, filterDesig, filterSearch) => {
+const generateMonthlyPivotExcel = async (startDate, endDate, filterDept, filterDesig, filterSearch, filterLocation) => {
     const tz = 'Asia/Kolkata';
 
     // 1. Compute the list of all days in the range
@@ -33,8 +33,12 @@ const generateMonthlyPivotExcel = async (startDate, endDate, filterDept, filterD
 
     // 2. Fetch all active employees (apply optional filters)
     const userQuery = { isActive: true };
-    if (filterDept)   userQuery['employment.department']  = filterDept;
-    if (filterDesig)  userQuery['employment.designation'] = filterDesig;
+    if (filterDept)     userQuery['employment.department']  = filterDept;
+    if (filterDesig)    userQuery['employment.designation'] = filterDesig;
+    if (filterLocation && filterLocation !== 'all') {
+        const escapedLoc = String(filterLocation).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        userQuery['employment.location'] = { $regex: `^${escapedLoc}$`, $options: 'i' };
+    }
     if (filterSearch) {
         const re = new RegExp(filterSearch, 'i');
         userQuery.$or = [
@@ -340,7 +344,7 @@ const generateMonthlyPivotExcel = async (startDate, endDate, filterDept, filterD
 // ─── Main report service ─────────────────────────────────────────────────────
 const reportService = {
     generateReport: async (params) => {
-        const { type, format, startDate, endDate, department, designation, search } = params;
+        const { type, format, startDate, endDate, department, designation, location, search } = params;
 
         if (type === 'attendance') {
             if (format === 'excel' || format === 'xlsx' || format === 'csv') {
@@ -349,7 +353,8 @@ const reportService = {
                     endDate,
                     department,
                     designation,
-                    search
+                    search,
+                    location
                 );
 
                 const monthLabel = moment(startDate || new Date()).format('YYYY-MM');

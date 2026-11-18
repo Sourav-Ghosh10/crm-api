@@ -104,6 +104,16 @@ const userSchema = new mongoose.Schema(
         type: String,
         trim: true,
       },
+      ifscCode: {
+        type: String,
+        trim: true,
+        uppercase: true,
+      },
+      panNumber: {
+        type: String,
+        trim: true,
+        uppercase: true,
+      },
       location: String,
       timezone: {
         type: String,

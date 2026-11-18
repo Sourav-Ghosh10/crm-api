@@ -26,7 +26,12 @@ const userService = {
     const query = { isActive: true };
 
     if (filters.role) query['employment.role'] = filters.role;
+    if (filters.roleId) query['employment.roleId'] = filters.roleId;
     if (filters.department) query['employment.department'] = filters.department;
+    if (filters.location && filters.location !== 'all') {
+      const escapedLoc = String(filters.location).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query['employment.location'] = { $regex: `^${escapedLoc}$`, $options: 'i' };
+    }
     if (filters.employmentType) query['employment.employmentType'] = filters.employmentType;
     if (filters.isActive !== undefined) query.isActive = filters.isActive;
     if (filters.search) {

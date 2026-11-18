@@ -10,6 +10,27 @@ const catchAsync = require('../utils/catchAsync');
 const { calculateDaysBetween } = require('../utils/dateUtils');
 const mongoose = require('mongoose');
 
+// Helper to resolve stored balance for a specific leave type from User.leaveBalance (Map or plain object)
+const getStoredTypeBalance = (userLeaveBalance, lt) => {
+    if (!userLeaveBalance) return null;
+    const entries = userLeaveBalance instanceof Map
+        ? Array.from(userLeaveBalance.entries())
+        : Object.entries(userLeaveBalance);
+    const nameLower = (lt.name || '').toLowerCase().trim();
+    const codeLower = (lt.code || '').toLowerCase().trim();
+    const idLower = lt._id ? String(lt._id).toLowerCase().trim() : '';
+
+    for (const [k, v] of entries) {
+        if (v === undefined || v === null) continue;
+        const kLower = String(k).toLowerCase().trim();
+        if (kLower === nameLower || kLower === codeLower || (idLower && kLower === idLower)) {
+            const num = Number(v);
+            return isNaN(num) ? 0 : num;
+        }
+    }
+    return null;
+};
+
 // Helper to calculate days (excluding weekly offs and holidays)
 const calculateLeaveDays = (start, end, halfDay, userSettings = {}) => {
     const startDate = new Date(start);
@@ -416,8 +437,8 @@ const leaveController = {
 
         if (req.params.userId) {
             // Check permission: Admin or Manager of that user
-            // For simplicity, allowing Admin/HR or self
-            if (req.user.employment.role === 'admin' || req.user.employment.role === 'hr' || req.user.employment.role === 'manager') {
+            const userRole = req.user.employment?.role;
+            if (req.user.isAdmin === true || userRole === 'Super Admin' || userRole === 'admin' || userRole === 'hr' || userRole === 'manager') {
                 targetUserId = req.params.userId;
             } else if (req.params.userId !== req.user._id.toString()) {
                 throw new ForbiddenError('You can only view your own leave balance.');
@@ -472,14 +493,19 @@ const leaveController = {
         const balances = activeLeaveTypes.map(lt => {
             const canonicalName = lt.name;
             const used = usedMap[canonicalName] || 0;
+            const stored = getStoredTypeBalance(user.leaveBalance, lt);
+            const allocated = stored !== null ? stored : (lt.defaultAmount || 0);
+            const currentBalance = lt.isPaid
+                ? Math.max(0, Number((allocated - used).toFixed(2)))
+                : null;
 
             return {
                 leaveTypeId: lt._id,
                 name: lt.name,
                 code: lt.code,
-                currentBalance: "", // Replaced by global balance
-                used: used,
-                totalAllocated: "", // Replaced by global balance
+                currentBalance,
+                used,
+                totalAllocated: lt.isPaid ? allocated : null,
                 isPaid: lt.isPaid
             };
         });
@@ -769,6 +795,181 @@ const leaveController = {
         });
     }),
 
+    // Get All Employees' Leave Balances (Admin/HR/Manager)
+    getAllEmployeeBalances: catchAsync(async (req, res) => {
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+        const { search, department, location } = req.query;
+        const skip = (page - 1) * limit;
+
+        const userFilter = { isActive: true };
+
+        if (department && department !== 'all') {
+            userFilter['employment.department'] = department;
+        }
+        if (location && location !== 'all') {
+            const escapedLoc = String(location).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            userFilter['employment.location'] = { $regex: `^${escapedLoc}$`, $options: 'i' };
+        }
+        if (search && search.trim()) {
+            const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            userFilter.$or = [
+                { 'personalInfo.firstName': { $regex: escapedSearch, $options: 'i' } },
+                { 'personalInfo.lastName': { $regex: escapedSearch, $options: 'i' } },
+                { 'personalInfo.email': { $regex: escapedSearch, $options: 'i' } },
+                { employeeId: { $regex: escapedSearch, $options: 'i' } },
+                { username: { $regex: escapedSearch, $options: 'i' } },
+                {
+                    $expr: {
+                        $regexMatch: {
+                            input: { $concat: ['$personalInfo.firstName', ' ', '$personalInfo.lastName'] },
+                            regex: escapedSearch,
+                            options: 'i',
+                        },
+                    },
+                },
+            ];
+        }
+
+        const [users, total, rawActiveLeaveTypes] = await Promise.all([
+            User.find(userFilter)
+                .select('employeeId username personalInfo employment totalLeaveBalance leaveBalance isPaidLeaveApplicable isActive')
+                .sort({ 'personalInfo.firstName': 1, 'personalInfo.lastName': 1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            User.countDocuments(userFilter),
+            LeaveType.find({ isActive: true, isPaid: true }).sort({ name: 1 }).lean(),
+        ]);
+
+        // Exclude any Unpaid / LWP leave types
+        const activeLeaveTypes = rawActiveLeaveTypes.filter(lt => {
+            const nameLower = (lt.name || '').toLowerCase();
+            const codeLower = (lt.code || '').toLowerCase();
+            return lt.isPaid !== false && codeLower !== 'lwp' && codeLower !== 'unpaid' && !nameLower.includes('unpaid');
+        });
+
+        const userIds = users.map(u => u._id);
+
+        // Build resolution map: lowercase name / code -> canonical name
+        const typeResolutionMap = {};
+        activeLeaveTypes.forEach(lt => {
+            typeResolutionMap[lt.name.toLowerCase().trim()] = lt.name;
+            typeResolutionMap[lt.code.toLowerCase().trim()] = lt.name;
+        });
+
+        const leavesTaken = userIds.length > 0
+            ? await Leave.find({
+                employeeId: { $in: userIds },
+                status: { $in: ['approved', 'pending'] },
+            }).select('employeeId leaveType numberOfDays status').lean()
+            : [];
+
+        // Map: userId -> { [canonicalName]: { approved, pending } }
+        const usageByUserAndType = new Map();
+        for (const l of leavesTaken) {
+            const uid = l.employeeId.toString();
+            if (!usageByUserAndType.has(uid)) {
+                usageByUserAndType.set(uid, {});
+            }
+            const userMap = usageByUserAndType.get(uid);
+            const rawType = (l.leaveType || '').toLowerCase().trim();
+            const canonicalName = typeResolutionMap[rawType] || l.leaveType || 'Unknown';
+            if (!userMap[canonicalName]) {
+                userMap[canonicalName] = { approved: 0, pending: 0 };
+            }
+            if (l.status === 'approved') {
+                userMap[canonicalName].approved += (l.numberOfDays || 0);
+            } else if (l.status === 'pending') {
+                userMap[canonicalName].pending += (l.numberOfDays || 0);
+            }
+        }
+
+        const data = users.map(u => {
+            const userUsageMap = usageByUserAndType.get(u._id.toString()) || {};
+            let totalPaidAllocated = 0;
+            let totalPaidApproved = 0;
+            let totalPaidPending = 0;
+
+            const leaveBalances = activeLeaveTypes.map(lt => {
+                const storedVal = getStoredTypeBalance(u.leaveBalance, lt);
+                const allocated = storedVal !== null ? storedVal : (lt.defaultAmount || 0);
+                const typeUsage = userUsageMap[lt.name] || { approved: 0, pending: 0 };
+                const used = Number((typeUsage.approved + typeUsage.pending).toFixed(2));
+                const available = lt.isPaid
+                    ? Math.max(0, Number((allocated - used).toFixed(2)))
+                    : null;
+
+                if (lt.isPaid) {
+                    totalPaidAllocated += allocated;
+                    totalPaidApproved += typeUsage.approved;
+                    totalPaidPending += typeUsage.pending;
+                }
+
+                return {
+                    leaveTypeId: lt._id,
+                    name: lt.name,
+                    code: lt.code,
+                    isPaid: lt.isPaid,
+                    allocated: Number(allocated.toFixed(2)),
+                    approved: Number(typeUsage.approved.toFixed(2)),
+                    pending: Number(typeUsage.pending.toFixed(2)),
+                    used,
+                    available,
+                };
+            });
+
+            const usedLeaves = Number((totalPaidApproved + totalPaidPending).toFixed(2));
+            const totalQuota = Number(totalPaidAllocated.toFixed(2));
+            const availableBalance = u.isPaidLeaveApplicable === false
+                ? 0
+                : Math.max(0, Number((totalQuota - usedLeaves).toFixed(2)));
+
+            return {
+                _id: u._id,
+                userId: u._id,
+                employeeId: u.employeeId,
+                username: u.username,
+                personalInfo: {
+                    firstName: u.personalInfo?.firstName || '',
+                    lastName: u.personalInfo?.lastName || '',
+                    email: u.personalInfo?.email || '',
+                    profilePicture: u.personalInfo?.profilePicture || null,
+                },
+                employment: {
+                    department: u.employment?.department || '',
+                    designation: u.employment?.designation || '',
+                    location: u.employment?.location || '',
+                },
+                isPaidLeaveApplicable: u.isPaidLeaveApplicable !== false,
+                leaveBalances,
+                totalLeaveBalance: totalQuota,
+                approvedLeaves: Number(totalPaidApproved.toFixed(2)),
+                pendingLeaves: Number(totalPaidPending.toFixed(2)),
+                usedLeaves,
+                availableBalance,
+            };
+        });
+
+        res.json({
+            status: 'success',
+            leaveTypes: activeLeaveTypes.map(lt => ({
+                _id: lt._id,
+                name: lt.name,
+                code: lt.code,
+                isPaid: lt.isPaid,
+                defaultAmount: lt.defaultAmount || 0,
+            })),
+            data,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        });
+    }),
+
     // Update User Leave Balance (Admin/HR)
     updateUserLeaveBalance: catchAsync(async (req, res) => {
         const { userId } = req.params;
@@ -781,50 +982,76 @@ const leaveController = {
         const user = await User.findById(userId);
         if (!user) throw new NotFoundError('User not found');
 
+        const updateSet = {};
+
         if (totalLeaveBalance !== undefined) {
+            updateSet.totalLeaveBalance = Number(totalLeaveBalance);
             user.totalLeaveBalance = Number(totalLeaveBalance);
         }
 
-        if (leaveBalance && typeof leaveBalance === 'object') {
+        if (leaveBalance && typeof leaveBalance === 'object' && Object.keys(leaveBalance).length > 0) {
+            // Ensure leaveBalance Map exists
+            if (!user.leaveBalance) {
+                user.leaveBalance = new Map();
+            }
+
             // Fetch active leave types to build a resolution map (Raw Name-based)
-        const activeLeaveTypes = await LeaveType.find({ isActive: true });
-        const typeResolutionMap = {};
-        activeLeaveTypes.forEach(lt => {
-            const canonicalName = lt.name;
-            typeResolutionMap[lt.name.toLowerCase()] = canonicalName;
-            typeResolutionMap[lt.code.toLowerCase()] = canonicalName;
-        });
+            const activeLeaveTypes = await LeaveType.find({ isActive: true });
+            const typeResolutionMap = {};
+            activeLeaveTypes.forEach(lt => {
+                const canonicalName = lt.name;
+                typeResolutionMap[lt.name.toLowerCase().trim()] = canonicalName;
+                typeResolutionMap[lt.code.toLowerCase().trim()] = canonicalName;
+            });
 
-        const newBalances = leaveBalance.balances && Array.isArray(leaveBalance.balances)
-            ? leaveBalance.balances.map(b => ({ type: b.name || b.code, value: b.currentBalance }))
-            : Object.keys(leaveBalance).map(type => ({ type, value: leaveBalance[type] }));
+            const newBalances = leaveBalance.balances && Array.isArray(leaveBalance.balances)
+                ? leaveBalance.balances.map(b => ({ type: b.name || b.code, value: b.currentBalance }))
+                : Object.keys(leaveBalance).map(type => ({ type, value: leaveBalance[type] }));
 
-        for (const item of newBalances) {
-            if (typeof item.value === 'number') {
-                const rawType = item.type.toLowerCase();
-                const canonicalName = typeResolutionMap[rawType] || rawType;
+            for (const item of newBalances) {
+                const numVal = Number(item.value);
+                if (!isNaN(numVal) && numVal >= 0) {
+                    const rawType = String(item.type).toLowerCase().trim();
+                    const canonicalName = typeResolutionMap[rawType] || item.type;
 
-                // Clear any existing keys that resolve to this same canonical name to prevent duplicates
-                // e.g. if we are setting 'annual leave', remove 'al'
-                if (user.leaveBalance) {
+                    // Clear any existing keys that resolve to this same canonical name to prevent duplicates
                     for (const existingKey of Array.from(user.leaveBalance.keys())) {
-                        const existingCanonical = typeResolutionMap[existingKey.toLowerCase()] || existingKey.toLowerCase();
-                        if (existingCanonical === canonicalName) {
+                        const existingCanonical = typeResolutionMap[existingKey.toLowerCase().trim()] || existingKey;
+                        if (existingCanonical.toLowerCase() === canonicalName.toLowerCase()) {
                             user.leaveBalance.delete(existingKey);
                         }
                     }
-                }
 
-                user.leaveBalance.set(canonicalName, item.value);
+                    user.leaveBalance.set(canonicalName, numVal);
+                }
+            }
+
+            const plainLeaveBalance = Object.fromEntries(user.leaveBalance);
+            updateSet.leaveBalance = plainLeaveBalance;
+
+            // Keep totalLeaveBalance automatically synced as sum of all active paid leave types if not explicitly passed
+            if (totalLeaveBalance === undefined) {
+                const sumPaid = activeLeaveTypes
+                    .filter(lt => lt.isPaid)
+                    .reduce((sum, lt) => {
+                        const stored = getStoredTypeBalance(user.leaveBalance, lt);
+                        return sum + (stored !== null ? stored : (lt.defaultAmount || 0));
+                    }, 0);
+                updateSet.totalLeaveBalance = Number(sumPaid.toFixed(2));
+                user.totalLeaveBalance = updateSet.totalLeaveBalance;
             }
         }
-        } // End of if (leaveBalance)
 
-        await user.save();
+        await User.updateOne({ _id: user._id }, { $set: updateSet });
 
         res.json({
             status: 'success',
-            data: user.leaveBalance ? Object.fromEntries(user.leaveBalance) : {},
+            message: 'Leave balance updated successfully',
+            data: {
+                userId: user._id,
+                totalLeaveBalance: user.totalLeaveBalance || 0,
+                leaveBalance: user.leaveBalance ? Object.fromEntries(user.leaveBalance) : {},
+            },
         });
     }),
 };

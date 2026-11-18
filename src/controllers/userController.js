@@ -9,7 +9,9 @@ const userController = {
       const limit = parseInt(req.query.limit, 10) || 10;
       const filters = {
         role: req.query.role,
+        roleId: req.query.roleId,
         department: req.query.department,
+        location: req.query.location,
         isActive: req.query.isActive,
         employmentType: req.query.employmentType,
         search: req.query.search,

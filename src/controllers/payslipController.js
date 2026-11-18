@@ -1,15 +1,26 @@
 const payslipService = require('../services/payslipService');
+const { NotFoundError } = require('../utils/errors');
+
+const isAdminOrHR = (user) => {
+  const role = (user?.employment?.role || '').toLowerCase();
+  return user?.isAdmin === true || role === 'super admin' || role === 'admin' || role === 'hr';
+};
 
 const payslipController = {
   getPayslips: async (req, res, next) => {
     try {
       const page = parseInt(req.query.page, 10) || 1;
       const limit = parseInt(req.query.limit, 10) || 10;
+      const excludeStatus = !isAdminOrHR(req.user)
+        ? 'DRAFT'
+        : req.query.excludeStatus;
+
       const filters = {
         employeeId: req.query.employeeId,
         month: req.query.month ? parseInt(req.query.month, 10) : undefined,
         year: req.query.year ? parseInt(req.query.year, 10) : undefined,
         status: req.query.status,
+        excludeStatus,
       };
 
       const result = await payslipService.getPayslips({ page, limit, filters });
@@ -32,6 +43,9 @@ const payslipController = {
   getPayslipById: async (req, res, next) => {
     try {
       const payslip = await payslipService.getPayslipById(req.params.id);
+      if (!isAdminOrHR(req.user) && payslip.status === 'DRAFT') {
+        throw new NotFoundError('Payslip not found');
+      }
       res.status(200).json({
         success: true,
         data: payslip,

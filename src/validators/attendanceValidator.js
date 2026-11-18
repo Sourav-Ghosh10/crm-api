@@ -21,6 +21,7 @@ const attendanceQuerySchema = Joi.object({
   search: Joi.string().max(100),
   department: Joi.string().max(100),
   designation: Joi.string().max(100),
+  location: Joi.string().max(100),
   isClockedIn: Joi.boolean(),
   isOnBreak: Joi.boolean(),
 });

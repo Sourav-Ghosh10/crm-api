@@ -45,6 +45,7 @@ const leaveQuerySchema = paginationSchema.keys({
 });
 
 const updateBalanceSchema = Joi.object({
+  totalLeaveBalance: Joi.number().min(0).optional(),
   leaveBalance: Joi.alternatives().try(
     // Simple map: { "sick": 10, "annual": 15 }
     Joi.object().pattern(Joi.string(), Joi.number().min(0).allow(null)),
@@ -57,8 +58,8 @@ const updateBalanceSchema = Joi.object({
         }).unknown(true)
       ).required(),
     }).unknown(true)
-  ).required(),
-});
+  ).optional(),
+}).or('leaveBalance', 'totalLeaveBalance');
 
 const cancelLeaveSchema = Joi.object({
   cancelReason: Joi.string().max(500).optional(),

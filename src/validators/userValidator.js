@@ -6,7 +6,9 @@ const userQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
   role: Joi.string(),
+  roleId: Joi.string(),
   department: Joi.string(),
+  location: Joi.string().max(100),
   employmentType: Joi.string().valid('full-time', 'part-time', 'contract', 'intern'),
   isActive: Joi.boolean(),
   search: Joi.string().max(100),
@@ -70,6 +72,8 @@ const createUserSchema = Joi.object({
     esiNumber: Joi.string().allow('', null).max(50),
     bankAccountNo: Joi.string().allow('', null).max(50),
     bankName: Joi.string().allow('', null).max(100),
+    ifscCode: Joi.string().allow('', null).max(20),
+    panNumber: Joi.string().allow('', null).max(20),
     location: Joi.string().max(100),
     timezone: Joi.string().max(100).default('Asia/Kolkata'),
     workingHours: Joi.object({

@@ -287,6 +287,41 @@ router.get('/balance', catchAsync(leaveController.getLeaveBalance));
 
 /**
  * @swagger
+ * /api/leave-requests/balances:
+ *   get:
+ *     summary: Get all employees' leave balances (Admin/HR/Manager)
+ *     tags: [Leave Requests]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: department
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: location
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Paginated list of employee leave balances
+ */
+router.get('/balances', catchAsync(leaveController.getAllEmployeeBalances));
+
+/**
+ * @swagger
  * /api/leave-requests/employee/{userId}/balance:
  *   get:
  *     summary: Get specific user's leave balance (Admin/Manager)

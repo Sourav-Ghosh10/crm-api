@@ -1,5 +1,9 @@
 const PDFDocument = require('pdfkit');
 const moment = require('moment');
+const path = require('path');
+const fs = require('fs');
+
+const LOGO_PATH = path.join(__dirname, '..', 'assets', 'nrnst-logo.png');
 
 /**
  * Generates a professional PDF payslip
@@ -21,9 +25,13 @@ const generatePayslipPDF = async (payslip, user) => {
 
       // Header Area
       doc.rect(0, 0, doc.page.width, 140).fill('#f8fafc');
-      
-      doc.fillColor('#4f46e5').fontSize(24).text('NRNST TECH', 50, 45, { weight: 'bold' });
-      doc.fillColor('#64748b').fontSize(10).text('PRIVATE LIMITED', 50, 75);
+
+      if (fs.existsSync(LOGO_PATH)) {
+        doc.image(LOGO_PATH, 50, 32, { fit: [180, 75] });
+      } else {
+        doc.fillColor('#4f46e5').fontSize(24).text('NRNST TECH', 50, 45, { weight: 'bold' });
+        doc.fillColor('#64748b').fontSize(10).text('PRIVATE LIMITED', 50, 75);
+      }
       
       doc.fillColor('#1e293b').fontSize(28).text('PAYSLIP', 0, 45, { align: 'right', indent: 50 });
       doc.fillColor('#4f46e5').fontSize(12).text(`${monthName.toUpperCase()} ${payslip.year}`, 0, 80, { align: 'right', indent: 50 });
@@ -34,31 +42,43 @@ const generatePayslipPDF = async (payslip, user) => {
       doc.fillColor('#1e293b').fontSize(14).text('EMPLOYEE DETAILS', 50, 160);
       doc.rect(50, 180, 500, 1).fill('#e2e8f0');
 
-      doc.fontSize(10).fillColor('#64748b');
-      doc.text('Name:', 50, 200);
-      doc.text('Employee ID:', 50, 220);
-      doc.text('Designation:', 50, 240);
+      const joinDateStr = user.employment?.dateOfJoining
+        ? moment(user.employment.dateOfJoining).format('DD MMM YYYY')
+        : 'N/A';
+
+      doc.fontSize(9.5).fillColor('#64748b');
+      doc.text('Name:', 50, 195);
+      doc.text('Employee ID:', 50, 212);
+      doc.text('Joining Date:', 50, 229);
+      doc.text('Designation:', 50, 246);
+      doc.text('Department:', 50, 263);
+      doc.text('Days Worked / LOP:', 50, 280);
 
       doc.fillColor('#1e293b');
-      doc.text(`${user.personalInfo.firstName} ${user.personalInfo.lastName}`, 150, 200);
-      doc.text(user.employment?.employeeId || 'N/A', 150, 220);
-      doc.text(user.employment?.designation?.name || user.employment?.designation || 'N/A', 150, 240);
+      doc.text(`${user.personalInfo?.firstName || ''} ${user.personalInfo?.lastName || ''}`.trim() || 'N/A', 150, 195);
+      doc.text(user.employeeId || user.employment?.employeeId || 'N/A', 150, 212);
+      doc.text(joinDateStr, 150, 229);
+      doc.text(user.employment?.designation?.name || user.employment?.designation || 'N/A', 150, 246);
+      doc.text(user.employment?.department?.name || user.employment?.department || 'N/A', 150, 263);
+      doc.text(`${payslip.daysWorked} / ${payslip.totalDays} (LOP: ${payslip.lopDays})`, 150, 280);
 
-      // Attendance Info
+      // Bank & Statutory Info (Right Column)
       doc.fillColor('#64748b');
-      doc.text('Total Days:', 350, 200);
-      doc.text('Days Worked:', 350, 220);
-      doc.text('LOP Days:', 350, 240);
+      doc.text('Bank Name:', 330, 195);
+      doc.text('Bank Account No:', 330, 212);
+      doc.text('IFSC Code:', 330, 229);
+      doc.text('PAN Number:', 330, 246);
+      doc.text('PF UAN:', 330, 263);
 
       doc.fillColor('#1e293b');
-      doc.text(payslip.totalDays.toString(), 450, 200);
-      doc.text(payslip.daysWorked.toString(), 450, 220);
-      doc.text(payslip.lopDays.toString(), 450, 240);
-
-      doc.moveDown(4);
+      doc.text(user.employment?.bankName || payslip.salaryConfigId?.bankName || 'N/A', 430, 195);
+      doc.text(user.employment?.bankAccountNo || payslip.salaryConfigId?.bankAccountNo || 'N/A', 430, 212);
+      doc.text(user.employment?.ifscCode || 'N/A', 430, 229);
+      doc.text(user.employment?.panNumber || user.personalInfo?.panNumber || 'N/A', 430, 246);
+      doc.text(user.employment?.uanNumber || 'N/A', 430, 263);
 
       // Table Header
-      const tableTop = 300;
+      const tableTop = 315;
       doc.rect(50, tableTop, 500, 25).fill('#f1f5f9');
       doc.fillColor('#475569').fontSize(10);
       doc.text('DESCRIPTION', 60, tableTop + 8);
