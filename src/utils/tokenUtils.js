@@ -63,6 +63,25 @@ const generateSessionId = () => uuidv4();
 
 const decodeToken = (token) => jwt.decode(token);
 
+const generateSSOToken = (userId, options = {}) => {
+  const payload = {
+    userId,
+    type: 'admin-sso',
+    nonce: uuidv4(),
+  };
+  return jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: options.expiresIn || '5m',
+  });
+};
+
+const verifySSOToken = (token) => {
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  if (decoded.type !== 'admin-sso') {
+    throw new Error('Invalid token type');
+  }
+  return decoded;
+};
+
 module.exports = {
   generateAccessToken,
   generateRefreshToken,
@@ -70,4 +89,6 @@ module.exports = {
   verifyRefreshToken,
   generateSessionId,
   decodeToken,
+  generateSSOToken,
+  verifySSOToken,
 };

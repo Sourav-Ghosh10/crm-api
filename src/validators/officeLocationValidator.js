@@ -15,6 +15,13 @@ const createOfficeLocationSchema = Joi.object({
     }),
     isHeadquarters: Joi.boolean(),
     isActive: Joi.boolean(),
+    timezone: Joi.string().trim().max(50),
+    coordinates: Joi.object({
+        latitude: Joi.number().min(-90).max(90).allow(null, ''),
+        longitude: Joi.number().min(-180).max(180).allow(null, ''),
+    }).allow(null),
+    radius: Joi.number().min(5).max(50000).allow(null),
+    geofencingEnabled: Joi.boolean(),
 });
 
 const updateOfficeLocationSchema = Joi.object({
@@ -32,6 +39,13 @@ const updateOfficeLocationSchema = Joi.object({
     }),
     isHeadquarters: Joi.boolean(),
     isActive: Joi.boolean(),
+    timezone: Joi.string().trim().max(50),
+    coordinates: Joi.object({
+        latitude: Joi.number().min(-90).max(90).allow(null, ''),
+        longitude: Joi.number().min(-180).max(180).allow(null, ''),
+    }).allow(null),
+    radius: Joi.number().min(5).max(50000).allow(null),
+    geofencingEnabled: Joi.boolean(),
 }).min(1);
 
 const toggleStatusSchema = Joi.object({

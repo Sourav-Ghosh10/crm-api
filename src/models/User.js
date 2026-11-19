@@ -133,6 +133,10 @@ const userSchema = new mongoose.Schema(
       canViewReports: { type: Boolean, default: false },
     },
     allowedIPs: [String],
+    allowedLocations: {
+      type: [String],
+      default: [],
+    },
     leaveBalance: {
       type: Map,
       of: Number,

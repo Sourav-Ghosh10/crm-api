@@ -7,8 +7,10 @@ const {
   generateRefreshToken,
   generateSessionId,
   verifyRefreshToken,
+  generateSSOToken,
+  verifySSOToken,
 } = require('../utils/tokenUtils');
-const { UnauthorizedError, NotFoundError, BadRequestError, InternalError } = require('../utils/errors');
+const { UnauthorizedError, NotFoundError, BadRequestError, ForbiddenError, InternalError } = require('../utils/errors');
 const {
   SESSION_EXPIRY_SECONDS,
   MAX_LOGIN_ATTEMPTS,
@@ -346,6 +348,84 @@ const authService = {
       refreshToken,
       sessionId,
       ...(logoutCorrectionData || {})
+    };
+  },
+
+  generateAdminSSOToken: async (userId) => {
+    const user = await User.findById(userId).populate('employment.roleId');
+    if (!user || !user.isActive) {
+      throw new UnauthorizedError('User not found or inactive');
+    }
+
+    const roleName = user.employment?.roleId?.name || (typeof user.employment?.role === 'string' ? user.employment.role : '');
+    const isSuperAdmin = String(roleName).toLowerCase() === 'super admin';
+    const canAccessAdmin = Boolean(
+      isSuperAdmin ||
+      user.isAdmin ||
+      user.permissions?.canApproveLeave ||
+      (user.employment && user.employment.role !== 'employee')
+    );
+
+    if (!canAccessAdmin) {
+      throw new ForbiddenError('You do not have administrative access to the admin portal.');
+    }
+
+    const ssoToken = generateSSOToken(user._id);
+    return { ssoToken };
+  },
+
+  loginWithSSO: async ({ ssoToken, ipAddress }) => {
+    let decoded;
+    try {
+      decoded = verifySSOToken(ssoToken);
+    } catch (err) {
+      throw new UnauthorizedError('Invalid or expired SSO login link. Please sign in directly.');
+    }
+
+    const user = await User.findById(decoded.userId)
+      .select('+passwordHash')
+      .populate('employment.roleId');
+
+    if (!user) {
+      throw new UnauthorizedError('User not found. Please try again.');
+    }
+    if (!user.isActive) {
+      throw new UnauthorizedError('Your account is currently inactive.');
+    }
+
+    user.lastLogin = new Date();
+    user.failedLoginAttempts = 0;
+    user.accountLockedUntil = null;
+    await user.save();
+
+    // Admin session (isEmployee: false)
+    const sessionId = generateSessionId();
+    const accessToken = generateAccessToken(user._id, sessionId, { isEmployee: false });
+    const refreshToken = generateRefreshToken(user._id, sessionId, { isEmployee: false });
+
+    // Store session in Redis
+    const redisClient = getRedisClient();
+    if (redisClient) {
+      const sessionKey = `session:${user._id}:${sessionId}`;
+      try {
+        await redisClient.setEx(
+          sessionKey,
+          SESSION_EXPIRY_SECONDS,
+          JSON.stringify({ userId: user._id, sessionId, ipAddress })
+        );
+      } catch (redisError) {
+        logger.error('Failed to store SSO session in Redis:', redisError);
+      }
+    }
+
+    const userObj = user.toObject();
+    delete userObj.passwordHash;
+
+    return {
+      user: userObj,
+      accessToken,
+      refreshToken,
+      sessionId,
     };
   },
 };

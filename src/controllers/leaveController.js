@@ -5,6 +5,8 @@ const Holiday = require('../models/Holiday');
 const Schedule = require('../models/Schedule');
 const SystemSettings = require('../models/SystemSettings');
 const emailService = require('../services/emailService');
+const notificationService = require('../services/notificationService');
+const { NOTIFICATION_TYPES } = require('../config/constants');
 const { AppError, BadRequestError, NotFoundError, ForbiddenError } = require('../utils/errors');
 const catchAsync = require('../utils/catchAsync');
 const { calculateDaysBetween } = require('../utils/dateUtils');
@@ -266,8 +268,39 @@ const leaveController = {
             if (allRecipients.length > 0) {
                 await emailService.sendLeaveApplicationEmail(user, leave, allRecipients);
             }
+
+            // 3. In-App Notification for Reporting Manager
+            const managerIds = new Set();
+            if (user.employment?.reportingManager) {
+                managerIds.add(String(user.employment.reportingManager));
+            }
+            if (managers && managers.length > 0 && managers[0]?._id) {
+                managerIds.add(String(managers[0]._id));
+            }
+
+            const employeeName = `${user.personalInfo?.firstName || ''} ${user.personalInfo?.lastName || ''}`.trim() || 'An employee';
+            const durationText = `${leave.numberOfDays} day${leave.numberOfDays > 1 ? 's' : ''}`;
+
+            for (const managerId of managerIds) {
+                try {
+                    await notificationService.createNotification({
+                        recipientId: managerId,
+                        type: NOTIFICATION_TYPES.LEAVE_REQUEST,
+                        title: 'New Leave Request',
+                        message: `${employeeName} has applied for ${leave.leaveType} (${durationText}).`,
+                        relatedEntity: {
+                            entityType: 'leave',
+                            entityId: leave._id,
+                        },
+                        actionUrl: `/leave?id=${leave._id}`,
+                        priority: 'high',
+                    });
+                } catch (notifErr) {
+                    console.error(`Failed to create in-app notification for manager ${managerId}:`, notifErr);
+                }
+            }
         } catch (emailError) {
-            console.error('Failed to send leave application emails:', emailError);
+            console.error('Failed to send leave application emails / notifications:', emailError);
             // Don't fail the request if email fails
         }
 
@@ -807,7 +840,37 @@ const leaveController = {
         if (department && department !== 'all') {
             userFilter['employment.department'] = department;
         }
-        if (location && location !== 'all') {
+
+        const roleName = req.user?.employment?.role && typeof req.user.employment.role === 'object'
+            ? req.user.employment.role.name
+            : req.user?.employment?.role;
+        const isSuperAdmin = roleName && String(roleName).toLowerCase() === 'super admin';
+
+        const isRestrictedAdmin = Boolean(
+            !isSuperAdmin &&
+            req.user &&
+            req.user.isAdmin &&
+            Array.isArray(req.user.allowedLocations) &&
+            req.user.allowedLocations.length > 0 &&
+            !req.user.allowedLocations.includes('all') &&
+            !req.user.allowedLocations.includes('*')
+        );
+
+        if (isRestrictedAdmin) {
+            const allowed = req.user.allowedLocations.filter(Boolean);
+            if (location && location !== 'all') {
+                const reqLoc = String(location).trim().toLowerCase();
+                const matched = allowed.find(l => l.trim().toLowerCase() === reqLoc);
+                if (matched) {
+                    const escapedLoc = String(matched).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    userFilter['employment.location'] = { $regex: `^${escapedLoc}$`, $options: 'i' };
+                } else {
+                    userFilter['employment.location'] = { $in: allowed.map(l => new RegExp(`^${String(l).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) };
+                }
+            } else {
+                userFilter['employment.location'] = { $in: allowed.map(l => new RegExp(`^${String(l).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) };
+            }
+        } else if (location && location !== 'all') {
             const escapedLoc = String(location).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             userFilter['employment.location'] = { $regex: `^${escapedLoc}$`, $options: 'i' };
         }

@@ -168,6 +168,51 @@ const authController = {
         } catch (error) {
             next(error);
         }
+    },
+
+    generateSSOToken: async (req, res, next) => {
+        try {
+            const result = await authService.generateAdminSSOToken(req.user._id);
+            res.status(200).json({
+                success: true,
+                message: 'SSO token generated successfully',
+                data: result,
+            });
+        } catch (error) {
+            next(error);
+        }
+    },
+
+    ssoLogin: async (req, res, next) => {
+        try {
+            const { ssoToken } = req.body;
+            if (!ssoToken) {
+                return res.status(400).json({
+                    success: false,
+                    error: {
+                        code: 'BAD_REQUEST',
+                        message: 'SSO token is required',
+                    },
+                });
+            }
+            const ipAddress = req.ip || req.connection?.remoteAddress;
+            const result = await authService.loginWithSSO({ ssoToken, ipAddress });
+            res.status(200).json({
+                success: true,
+                message: 'SSO login successful',
+                data: result,
+            });
+        } catch (error) {
+            const status = error.statusCode || 500;
+            const code = error.code || 'UNAUTHORIZED';
+            res.status(status).json({
+                success: false,
+                error: {
+                    code,
+                    message: error.message,
+                },
+            });
+        }
     }
 };
 

@@ -27,6 +27,28 @@ const officeLocationSchema = new Schema({
         type: Boolean,
         default: true,
     },
+    timezone: {
+        type: String,
+        default: 'Asia/Kolkata',
+    },
+    coordinates: {
+        latitude: {
+            type: Number,
+            default: null,
+        },
+        longitude: {
+            type: Number,
+            default: null,
+        },
+    },
+    radius: {
+        type: Number,
+        default: 100, // Distance in meters
+    },
+    geofencingEnabled: {
+        type: Boolean,
+        default: true,
+    },
     createdAt: {
         type: Date,
         default: Date.now,

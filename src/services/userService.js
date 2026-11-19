@@ -1,7 +1,30 @@
 const User = require('../models/User');
-const { NotFoundError, ConflictError, BadRequestError } = require('../utils/errors');
+const { NotFoundError, ConflictError, BadRequestError, ForbiddenError } = require('../utils/errors');
 // const { hashPassword } = require('../utils/passwordUtils');
 const logger = require('../utils/logger');
+
+const escapeRegex = (string) => String(string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const isLocationRestricted = (user) => {
+  if (!user) return false;
+
+  // Super Admin can see and manage everything across all offices
+  const roleName = user.employment?.role && typeof user.employment.role === 'object'
+    ? user.employment.role.name
+    : user.employment?.role;
+
+  if (roleName && String(roleName).toLowerCase() === 'super admin') {
+    return false;
+  }
+
+  return Boolean(
+    user.isAdmin &&
+    Array.isArray(user.allowedLocations) &&
+    user.allowedLocations.length > 0 &&
+    !user.allowedLocations.includes('all') &&
+    !user.allowedLocations.includes('*')
+  );
+};
 
 const shiftTime = (timeStr, offsetMinutes) => {
   if (!timeStr || typeof timeStr !== 'string') return timeStr;
@@ -21,15 +44,33 @@ const shiftTime = (timeStr, offsetMinutes) => {
 };
 
 const userService = {
-  getUsers: async ({ page, limit, filters }) => {
+  getUsers: async ({ page, limit, filters, currentUser }) => {
     // console.log('🔍 Received filters:', filters);
     const query = { isActive: true };
 
     if (filters.role) query['employment.role'] = filters.role;
     if (filters.roleId) query['employment.roleId'] = filters.roleId;
     if (filters.department) query['employment.department'] = filters.department;
-    if (filters.location && filters.location !== 'all') {
-      const escapedLoc = String(filters.location).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    if (isLocationRestricted(currentUser)) {
+      const allowed = currentUser.allowedLocations.filter(Boolean);
+      if (filters.location && filters.location !== 'all') {
+        const reqLoc = String(filters.location).trim().toLowerCase();
+        const matched = allowed.find(al => al.trim().toLowerCase() === reqLoc);
+        if (matched) {
+          query['employment.location'] = { $regex: `^${escapeRegex(matched.trim())}$`, $options: 'i' };
+        } else {
+          query['employment.location'] = {
+            $in: allowed.map(al => new RegExp(`^${escapeRegex(al.trim())}$`, 'i')),
+          };
+        }
+      } else {
+        query['employment.location'] = {
+          $in: allowed.map(al => new RegExp(`^${escapeRegex(al.trim())}$`, 'i')),
+        };
+      }
+    } else if (filters.location && filters.location !== 'all') {
+      const escapedLoc = escapeRegex(String(filters.location).trim());
       query['employment.location'] = { $regex: `^${escapedLoc}$`, $options: 'i' };
     }
     if (filters.employmentType) query['employment.employmentType'] = filters.employmentType;
@@ -69,7 +110,7 @@ const userService = {
     return { users, total };
   },
 
-  getUserById: async (id) => {
+  getUserById: async (id, currentUser) => {
     const user = await User.findById(id)
       .select('-passwordHash')
       .populate('employment.roleId')
@@ -78,6 +119,17 @@ const userService = {
 
     if (!user) {
       throw new NotFoundError('User not found');
+    }
+
+    if (isLocationRestricted(currentUser)) {
+      const isSelf = String(currentUser._id || currentUser.id) === String(user._id || user.id);
+      const userLoc = (user.employment?.location || '').trim().toLowerCase();
+      const isAllowed = currentUser.allowedLocations.some(
+        loc => loc.trim().toLowerCase() === userLoc
+      );
+      if (!isSelf && userLoc && !isAllowed) {
+        throw new ForbiddenError('You do not have permission to view employees from this office location');
+      }
     }
 
     return user;
@@ -129,7 +181,38 @@ const userService = {
     return user;
   },
 
-  updateUser: async (id, updateData) => {
+  updateUser: async (id, updateData, currentUser) => {
+    if (currentUser) {
+      const isSelf = String(currentUser._id || currentUser.id) === String(id);
+
+      // Admin cannot edit their own profile from admin portal
+      const hasAdminFields = Boolean(
+        updateData.employment ||
+        updateData.isAdmin !== undefined ||
+        updateData.permissions ||
+        updateData.allowedLocations ||
+        updateData.leaveBalance ||
+        updateData.isActive !== undefined
+      );
+
+      if (isSelf && hasAdminFields) {
+        throw new ForbiddenError('Administrators cannot edit their own profile from the admin portal');
+      }
+
+      if (isLocationRestricted(currentUser)) {
+        const targetUser = await User.findById(id).select('employment.location').lean();
+        if (targetUser) {
+          const userLoc = (targetUser.employment?.location || '').trim().toLowerCase();
+          const isAllowed = currentUser.allowedLocations.some(
+            loc => loc.trim().toLowerCase() === userLoc
+          );
+          if (!isSelf && userLoc && !isAllowed) {
+            throw new ForbiddenError('You do not have permission to modify employees from this office location');
+          }
+        }
+      }
+    }
+
     const updatePayload = {};
 
     // Resolve role name if roleId is provided
@@ -169,6 +252,7 @@ const userService = {
       'isHolidayApplicable',
       'isPaidLeaveApplicable',
       'allowedIPs',
+      'allowedLocations',
       'leaveBalance',
       'totalLeaveBalance',
       'lastLogin',
@@ -244,9 +328,17 @@ const userService = {
     return user;
   },
 
-  getTimezonesSummary: async () => {
+  getTimezonesSummary: async (currentUser) => {
+    const match = { isActive: true };
+    if (isLocationRestricted(currentUser)) {
+      const allowed = currentUser.allowedLocations.filter(Boolean);
+      match['employment.location'] = {
+        $in: allowed.map(al => new RegExp(`^${escapeRegex(al.trim())}$`, 'i')),
+      };
+    }
+
     const summary = await User.aggregate([
-      { $match: { isActive: true } },
+      { $match: match },
       {
         $group: {
           _id: { $ifNull: ['$employment.timezone', 'Asia/Kolkata'] },
@@ -261,7 +353,7 @@ const userService = {
     }));
   },
 
-  adjustTimezoneHours: async ({ timezone, direction, hours = 0, minutes = 0, syncFutureSchedules = true }) => {
+  adjustTimezoneHours: async ({ timezone, direction, hours = 0, minutes = 0, syncFutureSchedules = true, currentUser }) => {
     const sign = direction === 'subtract' ? -1 : 1;
     const totalOffsetMinutes = sign * (parseInt(hours, 10) * 60 + parseInt(minutes, 10));
 
@@ -282,6 +374,13 @@ const userService = {
           : []),
       ],
     };
+
+    if (isLocationRestricted(currentUser)) {
+      const allowed = currentUser.allowedLocations.filter(Boolean);
+      filter['employment.location'] = {
+        $in: allowed.map(al => new RegExp(`^${escapeRegex(al.trim())}$`, 'i')),
+      };
+    }
 
     const users = await User.find(filter);
 

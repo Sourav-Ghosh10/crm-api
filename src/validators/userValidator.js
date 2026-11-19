@@ -93,6 +93,7 @@ const createUserSchema = Joi.object({
     }),
   }),
   allowedIPs: Joi.array().items(Joi.string().ip({ version: ['ipv4', 'ipv6'] })),
+  allowedLocations: Joi.array().items(Joi.string().allow('', null)).default([]),
   leaveBalance: Joi.object({
     casual: Joi.number().integer().min(0).max(100),
     sick: Joi.number().integer().min(0).max(100),
@@ -114,7 +115,7 @@ const createUserSchema = Joi.object({
 
 // Update user schema (all fields optional, password and employeeId forbidden)
 const updateUserSchema = createUserSchema.fork(
-  ['employeeId', 'username', 'password', 'personalInfo', 'personalInfo.firstName', 'personalInfo.lastName', 'personalInfo.email', 'employment', 'allowedIPs', 'leaveBalance', 'isAdmin', 'isHolidayApplicable', 'permissions'],
+  ['employeeId', 'username', 'password', 'personalInfo', 'personalInfo.firstName', 'personalInfo.lastName', 'personalInfo.email', 'employment', 'allowedIPs', 'allowedLocations', 'leaveBalance', 'isAdmin', 'isHolidayApplicable', 'permissions'],
   (schema) => schema.optional()
 )
   .keys({

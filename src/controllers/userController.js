@@ -18,7 +18,7 @@ const userController = {
       };
       // console.log('📤 Filters being sent to service:', filters);
 
-      const result = await userService.getUsers({ page, limit, filters });
+      const result = await userService.getUsers({ page, limit, filters, currentUser: req.user });
 
       res.status(200).json({
         success: true,
@@ -37,7 +37,7 @@ const userController = {
 
   getUserById: async (req, res, next) => {
     try {
-      const user = await userService.getUserById(req.params.id);
+      const user = await userService.getUserById(req.params.id, req.user);
 
       res.status(200).json({
         success: true,
@@ -65,7 +65,7 @@ const userController = {
 
   updateUser: async (req, res, next) => {
     try {
-      const user = await userService.updateUser(req.params.id, req.body);
+      const user = await userService.updateUser(req.params.id, req.body, req.user);
 
       res.status(200).json({
         success: true,
@@ -109,7 +109,7 @@ const userController = {
 
   getTimezonesSummary: async (req, res, next) => {
     try {
-      const result = await userService.getTimezonesSummary();
+      const result = await userService.getTimezonesSummary(req.user);
       res.status(200).json({
         success: true,
         data: result,
@@ -121,7 +121,7 @@ const userController = {
 
   adjustTimezoneHours: async (req, res, next) => {
     try {
-      const result = await userService.adjustTimezoneHours(req.body);
+      const result = await userService.adjustTimezoneHours({ ...req.body, currentUser: req.user });
       const signText = result.direction === 'add' ? '+' : '-';
       const timeText = `${signText}${result.hours}h${result.minutes > 0 ? ` ${result.minutes}m` : ''}`;
       res.status(200).json({

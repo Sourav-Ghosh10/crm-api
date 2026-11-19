@@ -248,4 +248,57 @@ router.post('/reset-password', authController.resetPassword);
  */
 router.get('/me', authenticate, authController.getMe);
 
+/**
+ * @swagger
+ * /api/auth/sso-token:
+ *   post:
+ *     summary: Generate a short-lived single sign-on (SSO) token
+ *     description: Creates a 5-minute single-use SSO token for cross-portal seamless redirect (e.g., from Employee portal to Admin portal).
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: SSO token generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     ssoToken:
+ *                       type: string
+ */
+router.post('/sso-token', authenticate, authController.generateSSOToken);
+
+/**
+ * @swagger
+ * /api/auth/sso-login:
+ *   post:
+ *     summary: Authenticate via SSO token
+ *     description: Exchanges a valid single-use SSO token for access and refresh tokens.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - ssoToken
+ *             properties:
+ *               ssoToken:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: SSO login successful
+ *       400:
+ *         description: Invalid or expired SSO token
+ */
+router.post('/sso-login', authController.ssoLogin);
+
 module.exports = router;

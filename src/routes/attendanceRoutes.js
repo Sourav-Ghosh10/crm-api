@@ -56,8 +56,11 @@ router.get('/check-correction', attendanceController.checkLogoutCorrection);
  * @swagger
  * /api/attendance/clock-in:
  *   post:
- *     summary: Clock in
+ *     summary: Clock in employee shift
+ *     description: Starts a new attendance session. Validates geofence coordinates against assigned office location if geofencing is enabled.
  *     tags: [Attendance]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: false
  *       content:
@@ -65,11 +68,25 @@ router.get('/check-correction', attendanceController.checkLogoutCorrection);
  *           schema:
  *             type: object
  *             properties:
- *               deviceInfo: { type: string }
- *               remarks: { type: string }
+ *               deviceInfo:
+ *                 type: string
+ *                 description: User agent / device identifier
+ *               remarks:
+ *                 type: string
+ *                 description: Optional employee remarks
+ *               latitude:
+ *                 type: number
+ *                 description: Device GPS latitude (required if geofencing is active for user office)
+ *                 example: 22.5726
+ *               longitude:
+ *                 type: number
+ *                 description: Device GPS longitude (required if geofencing is active for user office)
+ *                 example: 88.3639
  *     responses:
  *       201:
- *         description: Clocked in
+ *         description: Clocked in successfully
+ *       400:
+ *         description: Outside office premises, open session already exists, or location access missing
  */
 router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
 
@@ -77,8 +94,11 @@ router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
  * @swagger
  * /api/attendance/clock-out:
  *   post:
- *     summary: Clock out
+ *     summary: Clock out current shift
+ *     description: Ends the current open attendance session. Validates geofence coordinates if geofencing is enabled.
  *     tags: [Attendance]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: false
  *       content:
@@ -86,10 +106,22 @@ router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
  *           schema:
  *             type: object
  *             properties:
- *               deviceInfo: { type: string }
+ *               deviceInfo:
+ *                 type: string
+ *                 description: User agent / device identifier
+ *               latitude:
+ *                 type: number
+ *                 description: Device GPS latitude (required if geofencing is active for user office)
+ *                 example: 22.5726
+ *               longitude:
+ *                 type: number
+ *                 description: Device GPS longitude (required if geofencing is active for user office)
+ *                 example: 88.3639
  *     responses:
  *       200:
- *         description: Clocked out
+ *         description: Clocked out successfully
+ *       400:
+ *         description: Outside office premises, no active session, or on break
  */
 router.post('/clock-out', validate(checkOutSchema), attendanceController.clockOut);
 

@@ -12,6 +12,23 @@ const { getRealTime } = require('../utils/realTime');
 
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const isLocationRestricted = (user) => {
+    if (!user) return false;
+    const roleName = user.employment?.role && typeof user.employment.role === 'object'
+        ? user.employment.role.name
+        : user.employment?.role;
+    if (roleName && String(roleName).toLowerCase() === 'super admin') {
+        return false;
+    }
+    return Boolean(
+        user.isAdmin &&
+        Array.isArray(user.allowedLocations) &&
+        user.allowedLocations.length > 0 &&
+        !user.allowedLocations.includes('all') &&
+        !user.allowedLocations.includes('*')
+    );
+};
+
 // Shared Helper: Format duration in MS to "1H 2M 2S"
 const formatDuration = (ms) => {
     const seconds = Math.floor((ms / 1000) % 60);
@@ -127,6 +144,65 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
     return record;
 };
 
+// Geofence Distance Validation Helper
+const validateGeofence = async (user, payload = {}, action = 'clock in') => {
+    const locationName = user?.employment?.location;
+    if (!locationName) return;
+
+    const OfficeLocation = require('../models/OfficeLocation');
+    const mongoose = require('mongoose');
+
+    const office = await OfficeLocation.findOne({
+        $or: [
+            { name: new RegExp(`^${String(locationName).trim()}$`, 'i') },
+            ...(mongoose.Types.ObjectId.isValid(locationName) ? [{ _id: locationName }] : [])
+        ],
+        isActive: true
+    }).lean();
+
+    if (!office) return;
+
+    // Check if geofencing is enabled and coordinates are defined for this office
+    const isGeofencingEnabled = office.geofencingEnabled !== false && 
+        office.coordinates && 
+        typeof office.coordinates.latitude === 'number' && 
+        typeof office.coordinates.longitude === 'number' &&
+        !isNaN(office.coordinates.latitude) &&
+        !isNaN(office.coordinates.longitude);
+
+    if (!isGeofencingEnabled) return;
+
+    // If geofencing is active, employee must have provided latitude and longitude
+    const empLat = parseFloat(payload.latitude);
+    const empLng = parseFloat(payload.longitude);
+
+    if (!payload.latitude || !payload.longitude || isNaN(empLat) || isNaN(empLng)) {
+        throw new BadRequestError(`Location access is required to ${action}. Please enable GPS / location permissions on your device.`);
+    }
+
+    const officeLat = office.coordinates.latitude;
+    const officeLng = office.coordinates.longitude;
+    const allowedRadius = typeof office.radius === 'number' && office.radius > 0 ? office.radius : 100;
+
+    // Haversine distance calculation in meters
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const R = 6371000; // Earth radius in meters
+    const dLat = toRad(empLat - officeLat);
+    const dLng = toRad(empLng - officeLng);
+    const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(officeLat)) * Math.cos(toRad(empLat)) * 
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distanceMeters = Math.round(R * c);
+
+    if (distanceMeters > allowedRadius) {
+        throw new BadRequestError(
+            `You are outside office premises (${distanceMeters}m away from ${office.name}). ${action === 'clock in' ? 'Clock-in' : 'Clock-out'} is only permitted within ${allowedRadius} meters.`
+        );
+    }
+};
+
 const attendanceService = {
     clockIn: async (userId, payload) => {
         const now = getRealTime();
@@ -134,6 +210,9 @@ const attendanceService = {
         // 1. Fetch User first to get timezone
         const user = await User.findById(userId).lean();
         if (!user) throw new NotFoundError('User not found');
+
+        // Check Geofence validation
+        await validateGeofence(user, payload, 'clock in');
 
         const timezone = user.employment?.timezone || 'Asia/Kolkata';
         const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
@@ -267,9 +346,12 @@ const attendanceService = {
     clockOut: async (userId, payload) => {
         const now = getRealTime();
         
-        const user = await User.findById(userId).select('employment.timezone').lean();
+        const user = await User.findById(userId).lean();
         if (!user) throw new NotFoundError('User not found');
         
+        // Check Geofence validation
+        await validateGeofence(user, payload, 'clock out');
+
         const timezone = user.employment?.timezone || 'Asia/Kolkata';
         const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
         const today = moment.utc(todayStr).toDate();
@@ -762,18 +844,36 @@ const attendanceService = {
     },
 
     getAllAttendance: async (query) => {
-        const { page = 1, limit = 20, employeeId, userId, startDate, endDate, status, search, department, designation, location, isClockedIn, isOnBreak, adminUserId } = query;
+        const { page = 1, limit = 20, employeeId, userId, startDate, endDate, status, search, department, designation, location, isClockedIn, isOnBreak, adminUserId, currentUser } = query;
         const targetEmployeeId = employeeId || userId;
         const skip = (page - 1) * limit;
 
         const filter = {};
 
+        const allowedLocs = isLocationRestricted(currentUser)
+            ? currentUser.allowedLocations.filter(Boolean)
+            : null;
+
         // Handle User-related filters (search, department, designation, location)
-        if (search || department || designation || (location && location !== 'all')) {
+        if (search || department || designation || (location && location !== 'all') || allowedLocs) {
             const userFilter = {};
             if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
             if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
-            if (location && location !== 'all') userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
+            if (allowedLocs) {
+                if (location && location !== 'all') {
+                    const reqLoc = String(location).trim().toLowerCase();
+                    const matched = allowedLocs.find(l => l.trim().toLowerCase() === reqLoc);
+                    if (matched) {
+                        userFilter['employment.location'] = { $regex: `^${escapeRegex(matched.trim())}$`, $options: 'i' };
+                    } else {
+                        userFilter['employment.location'] = { $in: allowedLocs.map(l => new RegExp(`^${escapeRegex(l.trim())}$`, 'i')) };
+                    }
+                } else {
+                    userFilter['employment.location'] = { $in: allowedLocs.map(l => new RegExp(`^${escapeRegex(l.trim())}$`, 'i')) };
+                }
+            } else if (location && location !== 'all') {
+                userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
+            }
             if (search) {
                 userFilter.$or = [
                     { 'personalInfo.firstName': { $regex: search, $options: 'i' } },
@@ -1084,7 +1184,7 @@ const attendanceService = {
         return { requiresLogoutCorrection: false };
     },
 
-    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, location, search, status, isLate, adminUserId }) => {
+    getSummary: async ({ page = 1, limit = 20, startDate, endDate, department, designation, location, search, status, isLate, adminUserId, currentUser }) => {
         const skip = (page - 1) * limit;
         
         // Dynamically fetch admin/requester timezone
@@ -1099,11 +1199,29 @@ const attendanceService = {
         const start = moment.tz(startStr, 'YYYY-MM-DD', DEFAULT_TZ).startOf('day').toDate();
         const end = moment.tz(endStr, 'YYYY-MM-DD', DEFAULT_TZ).endOf('day').toDate();
 
+        const allowedLocs = isLocationRestricted(currentUser)
+            ? currentUser.allowedLocations.filter(Boolean)
+            : null;
+
         // 1. Build User Filter
         const userFilter = { isActive: true };
         if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
         if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
-        if (location && location !== 'all') userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
+        if (allowedLocs) {
+            if (location && location !== 'all') {
+                const reqLoc = String(location).trim().toLowerCase();
+                const matched = allowedLocs.find(l => l.trim().toLowerCase() === reqLoc);
+                if (matched) {
+                    userFilter['employment.location'] = { $regex: `^${escapeRegex(matched.trim())}$`, $options: 'i' };
+                } else {
+                    userFilter['employment.location'] = { $in: allowedLocs.map(l => new RegExp(`^${escapeRegex(l.trim())}$`, 'i')) };
+                }
+            } else {
+                userFilter['employment.location'] = { $in: allowedLocs.map(l => new RegExp(`^${escapeRegex(l.trim())}$`, 'i')) };
+            }
+        } else if (location && location !== 'all') {
+            userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
+        }
         if (search) {
             userFilter.$or = [
                 { 'personalInfo.firstName': { $regex: search, $options: 'i' } },
@@ -1224,7 +1342,7 @@ const attendanceService = {
         };
     },
 
-    getStats: async ({ date, department, designation, location, adminUserId }) => {
+    getStats: async ({ date, department, designation, location, adminUserId, currentUser }) => {
         // Dynamically fetch admin/requester timezone
         let DEFAULT_TZ = 'Asia/Kolkata';
         if (adminUserId) {
@@ -1236,11 +1354,29 @@ const attendanceService = {
         const start = moment.tz(dateStr, 'YYYY-MM-DD', DEFAULT_TZ).startOf('day').toDate();
         const end = moment.tz(dateStr, 'YYYY-MM-DD', DEFAULT_TZ).endOf('day').toDate();
 
+        const allowedLocs = isLocationRestricted(currentUser)
+            ? currentUser.allowedLocations.filter(Boolean)
+            : null;
+
         // 1. Build User Filter
         const userFilter = { isActive: true };
         if (department && department !== 'all') userFilter['employment.department'] = { $regex: department, $options: 'i' };
         if (designation && designation !== 'all') userFilter['employment.designation'] = { $regex: designation, $options: 'i' };
-        if (location && location !== 'all') userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
+        if (allowedLocs) {
+            if (location && location !== 'all') {
+                const reqLoc = String(location).trim().toLowerCase();
+                const matched = allowedLocs.find(l => l.trim().toLowerCase() === reqLoc);
+                if (matched) {
+                    userFilter['employment.location'] = { $regex: `^${escapeRegex(matched.trim())}$`, $options: 'i' };
+                } else {
+                    userFilter['employment.location'] = { $in: allowedLocs.map(l => new RegExp(`^${escapeRegex(l.trim())}$`, 'i')) };
+                }
+            } else {
+                userFilter['employment.location'] = { $in: allowedLocs.map(l => new RegExp(`^${escapeRegex(l.trim())}$`, 'i')) };
+            }
+        } else if (location && location !== 'all') {
+            userFilter['employment.location'] = { $regex: `^${escapeRegex(location.trim())}$`, $options: 'i' };
+        }
 
         const totalActiveEmployees = await User.countDocuments(userFilter);
         const activeUserIds = await User.find(userFilter).distinct('_id');
