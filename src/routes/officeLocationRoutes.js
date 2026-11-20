@@ -88,6 +88,32 @@ router.use(authenticate);
  *           type: boolean
  *           description: Whether geofence restriction is enabled for attendance
  *           default: true
+ *         geofencingMobile:
+ *           type: boolean
+ *           description: Apply geofencing rule on mobile devices
+ *           default: true
+ *         geofencingDesktop:
+ *           type: boolean
+ *           description: Apply geofencing rule on desktop/laptop devices
+ *           default: true
+ *         ipRestrictionEnabled:
+ *           type: boolean
+ *           description: Whether IP network whitelist restriction is enabled
+ *           default: false
+ *         allowedIps:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: List of authorized office IP addresses or subnets
+ *           example: ["103.21.244.2", "192.168.1.1"]
+ *         ipRestrictionMobile:
+ *           type: boolean
+ *           description: Apply IP restriction on mobile devices
+ *           default: true
+ *         ipRestrictionDesktop:
+ *           type: boolean
+ *           description: Apply IP restriction on desktop/laptop devices
+ *           default: true
  *         timezone:
  *           type: string
  *           default: "Asia/Kolkata"

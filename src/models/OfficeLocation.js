@@ -49,6 +49,30 @@ const officeLocationSchema = new Schema({
         type: Boolean,
         default: true,
     },
+    geofencingMobile: {
+        type: Boolean,
+        default: true,
+    },
+    geofencingDesktop: {
+        type: Boolean,
+        default: true,
+    },
+    ipRestrictionEnabled: {
+        type: Boolean,
+        default: false,
+    },
+    allowedIps: {
+        type: [String],
+        default: [],
+    },
+    ipRestrictionMobile: {
+        type: Boolean,
+        default: true,
+    },
+    ipRestrictionDesktop: {
+        type: Boolean,
+        default: true,
+    },
     createdAt: {
         type: Date,
         default: Date.now,

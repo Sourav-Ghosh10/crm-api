@@ -71,6 +71,11 @@ router.get('/check-correction', attendanceController.checkLogoutCorrection);
  *               deviceInfo:
  *                 type: string
  *                 description: User agent / device identifier
+ *               device:
+ *                 type: string
+ *                 enum: [mobile, desktop]
+ *                 description: Device category (mobile or desktop)
+ *                 example: desktop
  *               remarks:
  *                 type: string
  *                 description: Optional employee remarks
@@ -82,11 +87,15 @@ router.get('/check-correction', attendanceController.checkLogoutCorrection);
  *                 type: number
  *                 description: Device GPS longitude (required if geofencing is active for user office)
  *                 example: 88.3639
+ *               ip:
+ *                 type: string
+ *                 description: Client IP address (optional override)
+ *                 example: 103.21.244.2
  *     responses:
  *       201:
  *         description: Clocked in successfully
  *       400:
- *         description: Outside office premises, open session already exists, or location access missing
+ *         description: Outside office premises, IP not authorized, open session already exists, or location access missing
  */
 router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
 
@@ -95,7 +104,7 @@ router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
  * /api/attendance/clock-out:
  *   post:
  *     summary: Clock out current shift
- *     description: Ends the current open attendance session. Validates geofence coordinates if geofencing is enabled.
+ *     description: Ends the current open attendance session. Validates geofence coordinates and IP restrictions if enabled.
  *     tags: [Attendance]
  *     security:
  *       - bearerAuth: []
@@ -109,6 +118,11 @@ router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
  *               deviceInfo:
  *                 type: string
  *                 description: User agent / device identifier
+ *               device:
+ *                 type: string
+ *                 enum: [mobile, desktop]
+ *                 description: Device category (mobile or desktop)
+ *                 example: desktop
  *               latitude:
  *                 type: number
  *                 description: Device GPS latitude (required if geofencing is active for user office)
@@ -117,11 +131,15 @@ router.post('/clock-in', validate(checkInSchema), attendanceController.clockIn);
  *                 type: number
  *                 description: Device GPS longitude (required if geofencing is active for user office)
  *                 example: 88.3639
+ *               ip:
+ *                 type: string
+ *                 description: Client IP address (optional override)
+ *                 example: 103.21.244.2
  *     responses:
  *       200:
  *         description: Clocked out successfully
  *       400:
- *         description: Outside office premises, no active session, or on break
+ *         description: Outside office premises, IP not authorized, no active session, or on break
  */
 router.post('/clock-out', validate(checkOutSchema), attendanceController.clockOut);
 

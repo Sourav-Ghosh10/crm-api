@@ -3,13 +3,14 @@ const attendanceService = require('../services/attendanceService');
 const attendanceController = {
     clockIn: async (req, res, next) => {
         try {
-            const { deviceInfo, remarks, latitude, longitude } = req.body;
-            const ipAddress = req.ip || req.connection.remoteAddress;
+            const { deviceInfo, device, remarks, latitude, longitude, ip } = req.body;
+            const clientIp = ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection.remoteAddress;
 
             const payload = {
                 deviceInfo,
+                device,
                 remarks,
-                ipAddress,
+                ipAddress: clientIp,
                 latitude,
                 longitude
             };
@@ -28,12 +29,13 @@ const attendanceController = {
 
     clockOut: async (req, res, next) => {
         try {
-            const { deviceInfo, latitude, longitude } = req.body;
-            const ipAddress = req.ip || req.connection.remoteAddress;
+            const { deviceInfo, device, latitude, longitude, ip } = req.body;
+            const clientIp = ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection.remoteAddress;
 
             const payload = {
                 deviceInfo,
-                ipAddress,
+                device,
+                ipAddress: clientIp,
                 latitude,
                 longitude
             };

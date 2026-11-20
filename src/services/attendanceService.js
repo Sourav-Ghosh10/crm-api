@@ -144,8 +144,33 @@ const enrichAttendanceRecord = (record, timezone = 'Asia/Kolkata') => {
     return record;
 };
 
-// Geofence Distance Validation Helper
-const validateGeofence = async (user, payload = {}, action = 'clock in') => {
+// Helper to determine device type ('mobile' or 'desktop')
+const resolveDeviceType = (payload = {}) => {
+    if (payload.device) {
+        const d = String(payload.device).toLowerCase().trim();
+        if (d === 'mobile' || d === 'tablet') return 'mobile';
+        return 'desktop';
+    }
+    if (payload.deviceInfo && /android|iphone|ipad|ipod|mobile|blackberry|iemobile|opera mini/i.test(payload.deviceInfo)) {
+        return 'mobile';
+    }
+    return 'desktop';
+};
+
+// Clean IP helper (removes IPv6 prefix ::ffff:)
+const cleanIp = (ip = '') => {
+    let cleaned = String(ip).trim();
+    if (cleaned.startsWith('::ffff:')) {
+        cleaned = cleaned.replace('::ffff:', '');
+    }
+    if (cleaned === '::1') {
+        cleaned = '127.0.0.1';
+    }
+    return cleaned;
+};
+
+// Geofence & IP Restriction Validation Helper
+const validateAttendanceRestrictions = async (user, payload = {}, action = 'clock in') => {
     const locationName = user?.employment?.location;
     if (!locationName) return;
 
@@ -162,44 +187,82 @@ const validateGeofence = async (user, payload = {}, action = 'clock in') => {
 
     if (!office) return;
 
-    // Check if geofencing is enabled and coordinates are defined for this office
-    const isGeofencingEnabled = office.geofencingEnabled !== false && 
+    const deviceType = resolveDeviceType(payload); // 'mobile' | 'desktop'
+    const deviceLabel = deviceType === 'mobile' ? 'Mobile' : 'Desktop';
+
+    // 1. Geofence Distance Validation
+    const isGeofenceConfigured = office.geofencingEnabled !== false && 
         office.coordinates && 
         typeof office.coordinates.latitude === 'number' && 
         typeof office.coordinates.longitude === 'number' &&
         !isNaN(office.coordinates.latitude) &&
         !isNaN(office.coordinates.longitude);
 
-    if (!isGeofencingEnabled) return;
+    // Check device applicability for Geofencing
+    const shouldCheckGeofence = isGeofenceConfigured && (
+        deviceType === 'mobile' ? (office.geofencingMobile !== false) : (office.geofencingDesktop !== false)
+    );
 
-    // If geofencing is active, employee must have provided latitude and longitude
-    const empLat = parseFloat(payload.latitude);
-    const empLng = parseFloat(payload.longitude);
+    if (shouldCheckGeofence) {
+        const empLat = parseFloat(payload.latitude);
+        const empLng = parseFloat(payload.longitude);
 
-    if (!payload.latitude || !payload.longitude || isNaN(empLat) || isNaN(empLng)) {
-        throw new BadRequestError(`Location access is required to ${action}. Please enable GPS / location permissions on your device.`);
+        if (!payload.latitude || !payload.longitude || isNaN(empLat) || isNaN(empLng)) {
+            throw new BadRequestError(`Location access is required to ${action} on ${deviceLabel}. Please enable GPS / location permissions on your device.`);
+        }
+
+        const officeLat = office.coordinates.latitude;
+        const officeLng = office.coordinates.longitude;
+        const allowedRadius = typeof office.radius === 'number' && office.radius > 0 ? office.radius : 100;
+
+        // Haversine distance calculation in meters
+        const toRad = (deg) => (deg * Math.PI) / 180;
+        const R = 6371000; // Earth radius in meters
+        const dLat = toRad(empLat - officeLat);
+        const dLng = toRad(empLng - officeLng);
+        const a = 
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(officeLat)) * Math.cos(toRad(empLat)) * 
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distanceMeters = Math.round(R * c);
+
+        if (distanceMeters > allowedRadius) {
+            throw new BadRequestError(
+                `You are outside office premises (${distanceMeters}m away from ${office.name}). ${action === 'clock in' ? 'Clock-in' : 'Clock-out'} on ${deviceLabel} is only permitted within ${allowedRadius} meters.`
+            );
+        }
     }
 
-    const officeLat = office.coordinates.latitude;
-    const officeLng = office.coordinates.longitude;
-    const allowedRadius = typeof office.radius === 'number' && office.radius > 0 ? office.radius : 100;
+    // 2. IP Whitelist / Network Restriction Validation
+    const isIpConfigured = office.ipRestrictionEnabled === true && 
+        Array.isArray(office.allowedIps) && 
+        office.allowedIps.length > 0;
 
-    // Haversine distance calculation in meters
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const R = 6371000; // Earth radius in meters
-    const dLat = toRad(empLat - officeLat);
-    const dLng = toRad(empLng - officeLng);
-    const a = 
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRad(officeLat)) * Math.cos(toRad(empLat)) * 
-        Math.sin(dLng / 2) * Math.sin(dLng / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distanceMeters = Math.round(R * c);
+    // Check device applicability for IP restriction
+    const shouldCheckIp = isIpConfigured && (
+        deviceType === 'mobile' ? (office.ipRestrictionMobile !== false) : (office.ipRestrictionDesktop !== false)
+    );
 
-    if (distanceMeters > allowedRadius) {
-        throw new BadRequestError(
-            `You are outside office premises (${distanceMeters}m away from ${office.name}). ${action === 'clock in' ? 'Clock-in' : 'Clock-out'} is only permitted within ${allowedRadius} meters.`
-        );
+    if (shouldCheckIp) {
+        const rawClientIp = cleanIp(payload.ipAddress || '');
+        const allowedList = office.allowedIps
+            .map(ip => cleanIp(ip))
+            .filter(Boolean);
+
+        // Check exact match, localhost match, or wildcard match
+        const isAllowed = allowedList.some(allowed => {
+            if (allowed === rawClientIp) return true;
+            if ((allowed === '127.0.0.1' || allowed === 'localhost') && (rawClientIp === '127.0.0.1' || rawClientIp === '::1')) return true;
+            if (allowed.endsWith('*') && rawClientIp.startsWith(allowed.slice(0, -1))) return true;
+            return false;
+        });
+
+        if (!isAllowed) {
+            throw new BadRequestError(
+                `Your IP address (${rawClientIp || 'Unknown'}) is not authorized for ${office.name}. ${action === 'clock in' ? 'Clock-in' : 'Clock-out'} on ${deviceLabel} is only permitted from designated office networks.`
+            );
+        }
     }
 };
 
@@ -211,8 +274,8 @@ const attendanceService = {
         const user = await User.findById(userId).lean();
         if (!user) throw new NotFoundError('User not found');
 
-        // Check Geofence validation
-        await validateGeofence(user, payload, 'clock in');
+        // Check Geofence & IP validation
+        await validateAttendanceRestrictions(user, payload, 'clock in');
 
         const timezone = user.employment?.timezone || 'Asia/Kolkata';
         const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');
@@ -349,8 +412,8 @@ const attendanceService = {
         const user = await User.findById(userId).lean();
         if (!user) throw new NotFoundError('User not found');
         
-        // Check Geofence validation
-        await validateGeofence(user, payload, 'clock out');
+        // Check Geofence & IP validation
+        await validateAttendanceRestrictions(user, payload, 'clock out');
 
         const timezone = user.employment?.timezone || 'Asia/Kolkata';
         const todayStr = moment(now).tz(timezone).format('YYYY-MM-DD');

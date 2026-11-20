@@ -45,6 +45,11 @@ const officeLocationService = {
             throw new ConflictError('Office location with this name already exists');
         }
 
+        // Parse allowedIps if sent as comma-separated string
+        if (typeof data.allowedIps === 'string') {
+            data.allowedIps = data.allowedIps.split(',').map(ip => ip.trim()).filter(Boolean);
+        }
+
         // If this is set as headquarters, unset any existing headquarters
         if (data.isHeadquarters) {
             await OfficeLocation.updateMany({ isHeadquarters: true }, { isHeadquarters: false });
@@ -59,6 +64,11 @@ const officeLocationService = {
      * Update office location
      */
     updateOfficeLocation: async (id, data) => {
+        // Parse allowedIps if sent as comma-separated string
+        if (typeof data.allowedIps === 'string') {
+            data.allowedIps = data.allowedIps.split(',').map(ip => ip.trim()).filter(Boolean);
+        }
+
         // If this is set as headquarters, unset any existing headquarters
         if (data.isHeadquarters) {
             await OfficeLocation.updateMany({ _id: { $ne: id }, isHeadquarters: true }, { isHeadquarters: false });

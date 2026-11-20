@@ -3,15 +3,19 @@ const { objectIdSchema } = require('./commonValidator');
 
 const checkInSchema = Joi.object({
   deviceInfo: Joi.string().max(200),
+  device: Joi.string().valid('mobile', 'desktop', 'tablet').optional().allow('', null),
   remarks: Joi.string().max(500),
   latitude: Joi.number().min(-90).max(90).optional().allow(null),
   longitude: Joi.number().min(-180).max(180).optional().allow(null),
+  ip: Joi.string().optional().allow('', null),
 });
 
 const checkOutSchema = Joi.object({
   deviceInfo: Joi.string().max(200),
+  device: Joi.string().valid('mobile', 'desktop', 'tablet').optional().allow('', null),
   latitude: Joi.number().min(-90).max(90).optional().allow(null),
   longitude: Joi.number().min(-180).max(180).optional().allow(null),
+  ip: Joi.string().optional().allow('', null),
 });
 
 const attendanceQuerySchema = Joi.object({
