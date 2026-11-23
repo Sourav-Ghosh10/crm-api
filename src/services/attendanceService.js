@@ -1302,12 +1302,9 @@ const attendanceService = {
             ];
         }
 
-        // 2. Fetch Users (Paginated)
-        const totalUsers = await User.countDocuments(userFilter);
+        // 2. Fetch Users matching filters
         const users = await User.find(userFilter)
             .select('personalInfo employment username employeeId isHolidayApplicable')
-            .skip(skip)
-            .limit(limit)
             .lean();
 
         const userIds = users.map(u => u._id);
@@ -1384,23 +1381,34 @@ const attendanceService = {
             };
         });
 
-        // 6. Post-mapping filter if status was provided (since we joined simulated data)
-        // Note: For large datasets, this strategy needs change to true aggregation join
+        // 6. Post-mapping filter if status or isLate was provided
         let finalAttendance = attendance;
         if (status && status !== 'all') {
-            finalAttendance = finalAttendance.filter(a => a.status.toLowerCase() === status.toLowerCase());
+            const lowerStatus = status.toLowerCase();
+            if (lowerStatus === 'late') {
+                finalAttendance = finalAttendance.filter(a => a.isLate || a.status?.toLowerCase() === 'late');
+            } else {
+                finalAttendance = finalAttendance.filter(a => a.status?.toLowerCase() === lowerStatus);
+            }
         }
         if (isLate === true || isLate === 'true') {
             finalAttendance = finalAttendance.filter(a => a.isLate);
         }
 
+        const filteredTotal = finalAttendance.length;
+        const pageNum = Math.max(1, Number(page) || 1);
+        const limitNum = Math.max(1, Number(limit) || 10);
+        const pages = Math.ceil(filteredTotal / limitNum) || 1;
+        const skipIndex = (pageNum - 1) * limitNum;
+        const paginatedAttendance = finalAttendance.slice(skipIndex, skipIndex + limitNum);
+
         return {
-            attendance: finalAttendance,
+            attendance: paginatedAttendance,
             pagination: {
-                total: totalUsers,
-                page: Number(page),
-                limit: Number(limit),
-                pages: Math.ceil(totalUsers / limit)
+                total: filteredTotal,
+                page: pageNum,
+                limit: limitNum,
+                pages: pages
             }
         };
     },
