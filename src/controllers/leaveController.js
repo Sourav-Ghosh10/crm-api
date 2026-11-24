@@ -4,6 +4,7 @@ const LeaveType = require('../models/LeaveType');
 const Holiday = require('../models/Holiday');
 const Schedule = require('../models/Schedule');
 const SystemSettings = require('../models/SystemSettings');
+const OfficeLocation = require('../models/OfficeLocation');
 const emailService = require('../services/emailService');
 const notificationService = require('../services/notificationService');
 const { NOTIFICATION_TYPES } = require('../config/constants');
@@ -259,9 +260,29 @@ const leaveController = {
                 .map(m => m.personalInfo?.email)
                 .filter(email => !!email);
 
-            // 2. Get Additional Configured Emails
-            const adminSetting = await SystemSettings.findOne({ key: 'leave_notification_emails' });
-            const additionalEmails = adminSetting?.value || [];
+            // 2. Get Additional Configured Emails (Office-specific first, fallback to SystemSettings)
+            let additionalEmails = [];
+            if (user.employment?.location) {
+                const locTrim = String(user.employment.location).trim();
+                const office = await OfficeLocation.findOne({
+                    $or: [
+                        { name: locTrim },
+                        { name: { $regex: new RegExp(`^${locTrim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+                        ...(mongoose.Types.ObjectId.isValid(locTrim) ? [{ _id: locTrim }] : [])
+                    ]
+                });
+                if (office && Array.isArray(office.leaveNotificationEmails) && office.leaveNotificationEmails.length > 0) {
+                    additionalEmails = office.leaveNotificationEmails.filter(Boolean);
+                }
+            }
+
+            // Fallback: If no office emails found or configured, check SystemSettings
+            if (additionalEmails.length === 0) {
+                const adminSetting = await SystemSettings.findOne({ key: 'leave_notification_emails' });
+                if (adminSetting?.value && Array.isArray(adminSetting.value)) {
+                    additionalEmails = adminSetting.value.filter(Boolean);
+                }
+            }
             
             const allRecipients = Array.from(new Set([...managerEmails, ...additionalEmails]));
 

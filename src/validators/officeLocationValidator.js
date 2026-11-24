@@ -31,6 +31,10 @@ const createOfficeLocationSchema = Joi.object({
     ),
     ipRestrictionMobile: Joi.boolean(),
     ipRestrictionDesktop: Joi.boolean(),
+    leaveNotificationEmails: Joi.alternatives().try(
+        Joi.array().items(Joi.string().email().trim().lowercase()).allow(null),
+        Joi.string().trim().allow('', null)
+    ),
 });
 
 const updateOfficeLocationSchema = Joi.object({
@@ -64,6 +68,10 @@ const updateOfficeLocationSchema = Joi.object({
     ),
     ipRestrictionMobile: Joi.boolean(),
     ipRestrictionDesktop: Joi.boolean(),
+    leaveNotificationEmails: Joi.alternatives().try(
+        Joi.array().items(Joi.string().email().trim().lowercase()).allow(null),
+        Joi.string().trim().allow('', null)
+    ),
 }).min(1);
 
 const toggleStatusSchema = Joi.object({

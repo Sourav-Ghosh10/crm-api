@@ -50,6 +50,13 @@ const officeLocationService = {
             data.allowedIps = data.allowedIps.split(',').map(ip => ip.trim()).filter(Boolean);
         }
 
+        // Parse leaveNotificationEmails if sent as comma-separated string or array
+        if (typeof data.leaveNotificationEmails === 'string') {
+            data.leaveNotificationEmails = data.leaveNotificationEmails.split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+        } else if (Array.isArray(data.leaveNotificationEmails)) {
+            data.leaveNotificationEmails = data.leaveNotificationEmails.map(e => (typeof e === 'string' ? e.trim().toLowerCase() : '')).filter(Boolean);
+        }
+
         // If this is set as headquarters, unset any existing headquarters
         if (data.isHeadquarters) {
             await OfficeLocation.updateMany({ isHeadquarters: true }, { isHeadquarters: false });
@@ -67,6 +74,13 @@ const officeLocationService = {
         // Parse allowedIps if sent as comma-separated string
         if (typeof data.allowedIps === 'string') {
             data.allowedIps = data.allowedIps.split(',').map(ip => ip.trim()).filter(Boolean);
+        }
+
+        // Parse leaveNotificationEmails if sent as comma-separated string or array
+        if (typeof data.leaveNotificationEmails === 'string') {
+            data.leaveNotificationEmails = data.leaveNotificationEmails.split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+        } else if (Array.isArray(data.leaveNotificationEmails)) {
+            data.leaveNotificationEmails = data.leaveNotificationEmails.map(e => (typeof e === 'string' ? e.trim().toLowerCase() : '')).filter(Boolean);
         }
 
         // If this is set as headquarters, unset any existing headquarters

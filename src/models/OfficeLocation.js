@@ -73,6 +73,10 @@ const officeLocationSchema = new Schema({
         type: Boolean,
         default: true,
     },
+    leaveNotificationEmails: {
+        type: [String],
+        default: [],
+    },
     createdAt: {
         type: Date,
         default: Date.now,
