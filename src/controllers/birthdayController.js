@@ -1,25 +1,29 @@
 const User = require('../models/User');
 const logger = require('../utils/logger');
 
-const getMonthDay = (dateObj, timeZone = 'Asia/Kolkata') => {
+const getMonthDay = (dateObj) => {
   if (!dateObj) return null;
+
+  // If dateObj is already a string like "1995-11-27" or "1995-11-27T00:00:00.000Z"
+  if (typeof dateObj === 'string') {
+    const match = dateObj.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      return {
+        month: parseInt(match[2], 10),
+        day: parseInt(match[3], 10)
+      };
+    }
+  }
+
   const d = new Date(dateObj);
   if (isNaN(d.getTime())) return null;
 
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      month: 'numeric',
-      day: 'numeric'
-    }).formatToParts(d);
-
-    const month = parseInt(parts.find(p => p.type === 'month').value, 10);
-    const day = parseInt(parts.find(p => p.type === 'day').value, 10);
-    return { month, day };
-  } catch {
-    // Fallback to UTC if timezone error
-    return { month: d.getUTCMonth() + 1, day: d.getUTCDate() };
-  }
+  // Use UTC calendar date because Date of Birth is a fixed calendar day,
+  // not a timezone-shifting timestamp (e.g. UTC midnight shifting backwards in EST/PST)
+  return {
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate()
+  };
 };
 
 const birthdayController = {
@@ -67,7 +71,7 @@ const birthdayController = {
         const dob = u.personalInfo?.dateOfBirth;
         if (!dob) return;
 
-        const bInfo = getMonthDay(dob, userTimezone);
+        const bInfo = getMonthDay(dob);
         if (!bInfo) return;
 
         const { month: birthMonth, day: birthDay } = bInfo;
